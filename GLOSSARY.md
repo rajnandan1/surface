@@ -23,3 +23,11 @@ _Avoid_: Job, execution, build
 **Target**:
 The base URL a run calls, such as production or an ephemeral environment.
 _Avoid_: Host, environment, base URL
+
+**Saved value**:
+A value a test takes from its response, so later tests in the same suite can use it.
+_Avoid_: Capture, output, variable
+
+**Match mode**:
+How strictly a test compares a response body with its example body: by values, by types, or by keys only.
+_Avoid_: Match type, strictness
