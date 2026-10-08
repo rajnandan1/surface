@@ -10,7 +10,7 @@ kind: API                       # HTTP tests. Later kinds add UI and MCP tests.
 
 defaults:                       # Applies to every test. A test can override it.
   headers:
-    Authorization: Bearer ${{ secrets.crustdata.api_token }}   # Placeholder until the secrets ticket decides.
+    Authorization: Bearer ${{ secrets.production.api_token }}  # Key api_token of secret group production. See secrets.md.
   timeout: 10s                  # Connect + send + wait + read. The runner default is 30s.
 
 tests:
@@ -84,7 +84,7 @@ tests:
 
 - A variable is `${{ <name> }}`. Inside the braces, only a name lookup is allowed: no operators and no functions.
 - v1 has three kinds of names:
-  - `secrets.<group>.<name>` reads a secret. This is a placeholder. [Where do secrets live, and how does a suite declare the secrets it needs?](https://github.com/rajnandan1/surface/issues/6) decides the real shape.
+  - `secrets.<group>.<name>` reads the key `<name>` of the secret group `<group>`. The value is always text. The references are the suite's declaration of the groups it uses. Where groups live and who may use them is in [secrets.md](secrets.md).
   - `run.id` is a unique ID for each run.
   - `needs.<test>.<saved value>` reads a saved value from a test listed in `needs`.
 - A suite has no `vars:` block. Repetition across tests is acceptable.
@@ -162,7 +162,7 @@ The runner parses suites with `go.yaml.in/yaml/v3` at v3.0.5, the maintained for
 
 ## Decided elsewhere
 
-- The secret syntax: [Where do secrets live, and how does a suite declare the secrets it needs?](https://github.com/rajnandan1/surface/issues/6)
+- Secret groups, who may use them, and redaction: [secrets.md](secrets.md)
 - Where the target comes from: [How does a run get its target URL?](https://github.com/rajnandan1/surface/issues/7)
 - What a failed test prints: [What does a failed test print?](https://github.com/rajnandan1/surface/issues/9)
 - What happens to the tests that depend on a failed test, cleanup, and collisions between runs: [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10)

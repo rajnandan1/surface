@@ -31,3 +31,23 @@ _Avoid_: Capture, output, variable
 **Match mode**:
 How strictly a test compares a response body with its example body: by values, by types, or by keys only.
 _Avoid_: Match type, strictness
+
+**Secret group**:
+A named set of secrets that the operator creates and that a suite reads by name.
+_Avoid_: Context, environment, secret set, vault
+
+**Secret**:
+One named value inside a secret group, such as an API token.
+_Avoid_: Credential, env var, variable
+
+**Caller**:
+The source of a run: a repo and a branch, or later a schedule.
+_Avoid_: Identity, principal, source
+
+**Operator**:
+The person or team that installs surface in their own cluster and decides which callers may use which secret groups.
+_Avoid_: Admin, platform team, SRE
+
+**Suite author**:
+The developer who writes a suite in a product repo.
+_Avoid_: Developer, tester, user
