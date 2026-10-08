@@ -20,6 +20,14 @@ _Avoid_: Executor, worker, engine
 One execution of a set of suites, started by one CI job.
 _Avoid_: Job, execution, build
 
+**Run request**:
+The message a CI job sends to start a run. It names the target and carries the suites.
+_Avoid_: Job request, submission, payload
+
+**Client**:
+The surface command that runs inside a CI job, sends the run request, and waits for the result.
+_Avoid_: CLI, action, agent
+
 **Target**:
 The base URL a run calls, such as production or an ephemeral environment. The CI job sets it when it starts the run.
 _Avoid_: Host, environment, base URL
@@ -45,7 +53,7 @@ One named value inside a secret group, such as an API token.
 _Avoid_: Credential, env var, variable
 
 **Caller**:
-The source of a run: a repo and a branch, or later a schedule.
+The source of a run: a repo and a git ref (a branch, a tag, or a pull request's merge ref), or later a schedule.
 _Avoid_: Identity, principal, source
 
 **Operator**:

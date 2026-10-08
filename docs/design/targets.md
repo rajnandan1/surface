@@ -34,7 +34,7 @@ A test in a suite:
 
 ## Where a run's target comes from
 
-- The CI job sends one target in the run request, in the field `target`. How the CI job sends the run request is decided in [How does a CI job start a run and get the result?](https://github.com/rajnandan1/surface/issues/8).
+- The CI job sends one target in the run request, in the field `target`. The run request and how the CI job sends it are in [runs.md](runs.md).
 - A run has exactly one target. Every test path in every suite of the run is relative to it.
 - A suite has no target field. The runner has no default target. The runner rejects a run request without `target`.
 - A product with two services, for example `api.` and `auth.`, runs two runs, each with its own suites.

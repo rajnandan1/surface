@@ -85,7 +85,7 @@ tests:
 - A variable is `${{ <name> }}`. Inside the braces, only a name lookup is allowed: no operators and no functions.
 - v1 has three kinds of names:
   - `secrets.<group>.<name>` reads the key `<name>` of the secret group `<group>`. The value is always text. The references are the suite's declaration of the groups it uses. Where groups live and who may use them is in [secrets.md](secrets.md).
-  - `run.id` is a unique ID for each run.
+  - `run.id` is a unique ID for each run. Its format is in [runs.md](runs.md).
   - `needs.<test>.<saved value>` reads a saved value from a test listed in `needs`.
 - A suite has no `vars:` block. Repetition across tests is acceptable.
 - The runner checks every name at load, before it sends any request.
@@ -164,6 +164,7 @@ The runner parses suites with `go.yaml.in/yaml/v3` at v3.0.5, the maintained for
 
 - Secret groups, who may use them, and redaction: [secrets.md](secrets.md)
 - Where the target comes from, and how the runner builds the request URL: [targets.md](targets.md)
+- How a run starts, who the caller is, and how the result comes back: [runs.md](runs.md)
 - What a failed test prints: [What does a failed test print?](https://github.com/rajnandan1/surface/issues/9)
 - What happens to the tests that depend on a failed test, cleanup, and collisions between runs: [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10)
 - The maximum timeout: the "runner shape" item in the map's "Not yet specified" section.
