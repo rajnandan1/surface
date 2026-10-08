@@ -21,8 +21,12 @@ One execution of a set of suites, started by one CI job.
 _Avoid_: Job, execution, build
 
 **Target**:
-The base URL a run calls, such as production or an ephemeral environment.
+The base URL a run calls, such as production or an ephemeral environment. The CI job sets it when it starts the run.
 _Avoid_: Host, environment, base URL
+
+**Target list**:
+The list in the runner's config of the targets the runner may call. The runner calls no other target.
+_Avoid_: Allow-list, whitelist, host list
 
 **Saved value**:
 A value a test takes from its response, so later tests in the same suite can use it.

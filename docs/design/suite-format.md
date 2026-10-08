@@ -105,7 +105,7 @@ tests:
 | --- | --- | --- |
 | `name` | Yes | A slug `[a-z0-9-]`, unique in the suite. Later tests and the report use it. |
 | `method` | Yes | The HTTP method, for example `GET` or `POST`. |
-| `path` | Yes | The path, relative to the run's target. A test has no scheme and no host. |
+| `path` | Yes | The path, relative to the run's target. It starts with `/`. A test has no scheme and no host. |
 | `query` | No | A map of query parameters. A number or a bool becomes text. A list repeats the key. |
 | `headers` | No | A map of request headers. They merge with `defaults.headers`. |
 | `json` | No | A body that the runner sends as JSON. The runner sets `Content-Type: application/json` if the test does not set it. |
@@ -163,7 +163,7 @@ The runner parses suites with `go.yaml.in/yaml/v3` at v3.0.5, the maintained for
 ## Decided elsewhere
 
 - Secret groups, who may use them, and redaction: [secrets.md](secrets.md)
-- Where the target comes from: [How does a run get its target URL?](https://github.com/rajnandan1/surface/issues/7)
+- Where the target comes from, and how the runner builds the request URL: [targets.md](targets.md)
 - What a failed test prints: [What does a failed test print?](https://github.com/rajnandan1/surface/issues/9)
 - What happens to the tests that depend on a failed test, cleanup, and collisions between runs: [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10)
 - The maximum timeout: the "runner shape" item in the map's "Not yet specified" section.

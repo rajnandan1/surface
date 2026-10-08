@@ -61,7 +61,7 @@ stringData:
 
 - The runner's config has a `groups:` section. Each group has `callers`, `targets`, and an optional `secret`.
 - A caller is a `repo` and a `ref`. Both are matched as a glob where `*` does not cross a `/`, for example `crustdata/*` or `refs/pull/*/merge`. A run may use a group only if its caller matches one entry. How the runner learns the caller's `repo` and `ref` is decided in [How does a CI job start a run and get the result?](https://github.com/rajnandan1/surface/issues/8).
-- `targets` lists the targets the group's values may be sent to. How a target string is matched, and whether the runner also keeps one target list for every run, is decided in [How does a run get its target URL?](https://github.com/rajnandan1/surface/issues/7).
+- `targets` lists the targets the group's values may be sent to. A target string and its matching rules are in [targets.md](targets.md). The runner also keeps a target list for every run, in the same doc. That list is a separate check.
 - `callers` and `targets` are required and must not be empty. The runner refuses to start on a group with an empty list.
 - A Kubernetes Secret that no group names is invisible to suites. That includes Helm's own release Secrets in the same namespace.
 - A scheduled run later is a caller with a schedule name in place of a repo. The binding does not block it.
