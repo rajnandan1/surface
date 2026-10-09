@@ -191,8 +191,8 @@ A rejected run request prints the runner's one-line reason, for example `run: ta
 
 The client also writes:
 
-- **The job summary.** A table with one row per suite (path, passed, failed, skipped, cleanup failed) and a totals row, with the run id, to `$GITHUB_STEP_SUMMARY`. GitHub caps it at 1 MiB per step, so the client truncates and says so.
-- **Annotations.** One `::error file=<suite path>,line=<the test's line>::<test name>: <line one of the failure text>` per failed test, so the failure shows on the suite's line in the pull request. The test's line is the line of the test's mapping node in the YAML ([suite-format.md](suite-format.md)). A suite load failure gets `line=1` and no test name. A skipped test gets no annotation. A failed cleanup gets one on its test's line, with the message `<test name> cleanup: <line one>`.
+- **The job summary.** A table with one row per suite (path, passed, failed, skipped, cleanup failed) and a totals row, with the run id, to `$GITHUB_STEP_SUMMARY`. GitHub caps it at 1 MiB per step, so the client truncates and says so. The heading names the run id and the run `state`, and for `error` also the reason. A suite that failed at load shows `(load failed)` after its path, because its counts are all zero.
+- **Annotations.** One `::error file=<suite path>,line=<the test's line>::<test name>: <line one of the failure text>` per failed test, so the failure shows on the suite's line in the pull request. The test's line is the line of the test's mapping node in the YAML ([suite-format.md](suite-format.md)). A suite load failure gets `line=1` and no test name. A skipped test gets no annotation. A failed cleanup gets one on its test's line, with the message `<test name> cleanup: <line one>`. The client prints the annotations after the last line of the log.
 
 ## The action and the client
 

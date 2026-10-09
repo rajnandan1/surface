@@ -45,6 +45,8 @@ type test struct {
 	Needs   []string    `yaml:"needs"`
 	Save    savedValues `yaml:"save"`
 	Cleanup *request    `yaml:"cleanup"`
+
+	line int
 }
 
 type expect struct {
@@ -123,6 +125,14 @@ func loadSuite(path, text string) (suite, error) {
 	}
 	if len(s.Tests) == 0 {
 		return fail("tests is missing or empty")
+	}
+	doc := root.Content[0]
+	for i := 0; i < len(doc.Content); i += 2 {
+		if doc.Content[i].Value == "tests" {
+			for j, item := range doc.Content[i+1].Content {
+				s.Tests[j].line = item.Line
+			}
+		}
 	}
 	if err := checkTimeout(s.Defaults.Timeout); err != nil {
 		return fail("defaults: %v", err)
