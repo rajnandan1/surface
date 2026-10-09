@@ -62,11 +62,18 @@ func TestRunPrintsTheResultAndExits1WhenATestFails(t *testing.T) {
 	}
 	log := regexp.MustCompile(`\b[0-9a-z]{26}\b`).ReplaceAllString(stdout.String(), "<id>")
 	log = strings.ReplaceAll(log, target.URL, "<target>")
+	log = regexp.MustCompile(`in \d+ms +`).ReplaceAllString(log, "in <N>ms ")
+	log = regexp.MustCompile(`Date: .*`).ReplaceAllString(log, "Date: <date>")
 	want := `surface 1.0.0 run <id> target <target>
 surface/api/users.yaml: 1 passed, 1 failed
 
 surface/api/users.yaml list-users
   status: expected 200, got 500
+  > GET <target>/users
+  > User-Agent: surface/1.0.0 (run <id>)
+  < 500 Internal Server Error in <N>ms ✗ expected 200
+  < Content-Length: 0
+  < Date: <date>
 
 run <id>: 1 passed, 1 failed
 `

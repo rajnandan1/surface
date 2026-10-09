@@ -192,7 +192,7 @@ func expand(text string, vars map[string]json.RawMessage, escape func(string) st
 }
 
 // send returns at most maxResponseBody+1 bytes of the body, so check can tell a body over the cap.
-func send(runID string, request *http.Request, timeout string) (*http.Response, []byte, error) {
+func send(runID string, request *http.Request, timeout string) (*http.Response, []byte, time.Duration, error) {
 	userAgent := "surface/" + version + " (run " + runID + ")"
 	if own := request.Header.Get("User-Agent"); own != "" {
 		userAgent = own + " " + userAgent
@@ -201,16 +201,17 @@ func send(runID string, request *http.Request, timeout string) (*http.Response, 
 	limit, _ := time.ParseDuration(timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
+	start := time.Now()
 	response, err := targetClient.Do(request.WithContext(ctx))
 	if err != nil {
-		return nil, nil, noResponse(err, timeout)
+		return nil, nil, 0, noResponse(err, timeout)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBody+1))
 	if err != nil {
-		return nil, nil, noResponse(err, timeout)
+		return nil, nil, 0, noResponse(err, timeout)
 	}
-	return response, body, nil
+	return response, body, time.Since(start), nil
 }
 
 func noResponse(err error, timeout string) error {

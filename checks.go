@@ -16,8 +16,10 @@ import (
 )
 
 type failedCheck struct {
-	text  string
-	place []any
+	text    string
+	place   []any
+	mark    string
+	missing bool
 }
 
 type checker struct {
@@ -28,15 +30,15 @@ type checker struct {
 func checkResponse(t test, status int, header http.Header, body []byte, overCap bool) ([]failedCheck, map[string]json.RawMessage) {
 	c := &checker{mode: cmp.Or(t.Expect.Match, "values")}
 	if status != t.Expect.Status {
-		c.checks = append(c.checks, failedCheck{text: fmt.Sprintf("status: expected %d, got %d", t.Expect.Status, status), place: []any{"status"}})
+		c.wrong([]any{"status"}, strconv.Itoa(t.Expect.Status), strconv.Itoa(status))
 	}
 	for _, name := range slices.Sorted(maps.Keys(t.Expect.Headers)) {
 		want, values := t.Expect.Headers[name], header.Values(name)
 		switch {
 		case len(values) == 0:
-			c.fail([]any{"headers", name}, "expected %s, header is missing", compact(want))
+			c.absent([]any{"headers", name}, compact(want), "header is missing")
 		case values[0] != want:
-			c.fail([]any{"headers", name}, "expected %s, got %s", compact(want), compact(values[0]))
+			c.wrong([]any{"headers", name}, compact(want), compact(values[0]))
 		}
 	}
 
@@ -45,10 +47,10 @@ func checkResponse(t test, status int, header http.Header, body []byte, overCap 
 	bodyChecks := t.Expect.Body.Kind != 0 || len(t.Expect.Equal) > 0 || slices.ContainsFunc(t.Save, func(s savedValue) bool { return s.path.steps[0] == "body" })
 	switch {
 	case overCap:
-		c.fail([]any{"body"}, "response is over 10 MiB")
+		c.fail([]any{"body"}, "response is over 10 MiB", "over 10 MiB")
 	case !bodyChecks:
 	case !json.Valid(body):
-		c.fail([]any{"body"}, "not JSON")
+		c.fail([]any{"body"}, "not JSON", "not JSON")
 	default:
 		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.UseNumber()
@@ -84,7 +86,8 @@ func checkResponse(t test, status int, header http.Header, body []byte, overCap 
 			value, found = find(got, s.path.steps[1:])
 		}
 		if found < want {
-			c.checks = append(c.checks, failedCheck{text: fmt.Sprintf("save %s: %s finds nothing", s.name, s.path.text), place: s.path.steps[:found+2]})
+			place := s.path.steps[:found+2]
+			c.checks = append(c.checks, failedCheck{text: fmt.Sprintf("save %s: %s finds nothing", s.name, s.path.text), place: place, mark: lastStep(place) + " is missing, needed by save " + s.name, missing: true})
 			continue
 		}
 		saved[s.name], _ = json.Marshal(value)
@@ -124,8 +127,20 @@ func find(v any, steps []any) (any, int) {
 	return v, len(steps)
 }
 
-func (c *checker) fail(place []any, format string, args ...any) {
-	c.checks = append(c.checks, failedCheck{text: placeText(place) + ": " + fmt.Sprintf(format, args...), place: place})
+func (c *checker) fail(place []any, detail, mark string) {
+	c.checks = append(c.checks, failedCheck{text: placeText(place) + ": " + detail, place: place, mark: mark})
+}
+
+func (c *checker) wrong(place []any, want, got string) {
+	c.fail(place, "expected "+want+", got "+got, "expected "+want)
+}
+
+func (c *checker) absent(place []any, want, detail string) {
+	mark := lastStep(place) + " is missing"
+	if want != "" {
+		detail, mark = "expected "+want+", "+detail, mark+", expected "+want
+	}
+	c.checks = append(c.checks, failedCheck{text: placeText(place) + ": " + detail, place: place, mark: mark, missing: true})
 }
 
 func (c *checker) match(want *yaml.Node, got any, place []any) {
@@ -133,14 +148,14 @@ func (c *checker) match(want *yaml.Node, got any, place []any) {
 	switch {
 	case wantType == "null" || gotType == "null":
 		if c.mode == "values" && wantType != gotType {
-			c.fail(place, "expected %s, got %s", compact(exampleValue(want)), compact(got))
+			c.wrong(place, compact(exampleValue(want)), compact(got))
 		}
 	case wantType != gotType:
 		switch c.mode {
 		case "values":
-			c.fail(place, "expected %s, got %s", compact(exampleValue(want)), compact(got))
+			c.wrong(place, compact(exampleValue(want)), compact(got))
 		case "types":
-			c.fail(place, "expected %s, got %s", wantType, gotType)
+			c.wrong(place, wantType, gotType)
 		}
 	case wantType == "an object":
 		object := got.(map[string]any)
@@ -157,7 +172,8 @@ func (c *checker) match(want *yaml.Node, got any, place []any) {
 		items := got.([]any)
 		if c.mode == "values" {
 			if len(items) != len(want.Content) {
-				c.fail(place, "expected %d items, got %d", len(want.Content), len(items))
+				lengths := fmt.Sprintf("expected %d items, got %d", len(want.Content), len(items))
+				c.fail(place, lengths, lengths)
 				return
 			}
 			for i, item := range items {
@@ -169,18 +185,18 @@ func (c *checker) match(want *yaml.Node, got any, place []any) {
 			}
 		}
 	case c.mode == "values" && !sameScalar(want, got):
-		c.fail(place, "expected %s, got %s", compact(exampleValue(want)), compact(got))
+		c.wrong(place, compact(exampleValue(want)), compact(got))
 	}
 }
 
 func (c *checker) missing(want *yaml.Node, place []any) {
 	switch c.mode {
 	case "values":
-		c.fail(place, "expected %s, key is missing", compact(exampleValue(want)))
+		c.absent(place, compact(exampleValue(want)), "key is missing")
 	case "types":
-		c.fail(place, "expected %s, key is missing", exampleType(want))
+		c.absent(place, exampleType(want), "key is missing")
 	default:
-		c.fail(place, "key is missing")
+		c.absent(place, "", "key is missing")
 	}
 }
 
@@ -271,6 +287,13 @@ func compact(v any) string {
 		text = string(runes[:80]) + "…"
 	}
 	return text
+}
+
+func lastStep(place []any) string {
+	if i, ok := place[len(place)-1].(int); ok {
+		return fmt.Sprintf("[%d]", i)
+	}
+	return strconv.Quote(place[len(place)-1].(string))
 }
 
 func placeText(place []any) string {

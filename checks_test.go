@@ -26,6 +26,11 @@ func checkTest(t *testing.T, testYAML string, status int, header http.Header, bo
 	return checks
 }
 
+func lineOneOf(failure string) string {
+	line, _, _ := strings.Cut(failure, "\n")
+	return line
+}
+
 func texts(checks []failedCheck) []string {
 	var texts []string
 	for _, c := range checks {
@@ -143,12 +148,14 @@ func TestA500WithAJSONErrorBodyReportsEveryFailedCheck(t *testing.T) {
 	checks := checkTest(t, expect, 500, http.Header{"Content-Type": {"application/json"}}, `{"error": {"code": "db_down"}}`)
 
 	want := []failedCheck{
-		{`status: expected 201, got 500`, []any{"status"}},
-		{`body.data: expected {"id":1,"plan":"free"}, key is missing`, []any{"body", "data"}},
-		{`body.data.id: expected 8812, key is missing`, []any{"body", "data", "id"}},
-		{`save user_id: body.data.id finds nothing`, []any{"body", "data"}},
+		{`status: expected 201, got 500`, []any{"status"}, `expected 201`, false},
+		{`body.data: expected {"id":1,"plan":"free"}, key is missing`, []any{"body", "data"}, `"data" is missing, expected {"id":1,"plan":"free"}`, true},
+		{`body.data.id: expected 8812, key is missing`, []any{"body", "data", "id"}, `"id" is missing, expected 8812`, true},
+		{`save user_id: body.data.id finds nothing`, []any{"body", "data"}, `"data" is missing, needed by save user_id`, true},
 	}
-	if !slices.EqualFunc(checks, want, func(a, b failedCheck) bool { return a.text == b.text && slices.Equal(a.place, b.place) }) {
+	if !slices.EqualFunc(checks, want, func(a, b failedCheck) bool {
+		return a.text == b.text && slices.Equal(a.place, b.place) && a.mark == b.mark && a.missing == b.missing
+	}) {
 		t.Fatalf("failed checks are %v, want %v", checks, want)
 	}
 }
@@ -183,7 +190,7 @@ func TestARunReportsTheStatusAndEveryBodyFailureOfA500(t *testing.T) {
       equal: {body.data.id: 8812}
 `)
 
-	if got, want := oneTest(t, result).Failure, "status: expected 201, got 500 (+2 more)"; got != want {
-		t.Fatalf("failure is %q, want %q", got, want)
+	if got, want := lineOneOf(oneTest(t, result).Failure), "status: expected 201, got 500 (+2 more)"; got != want {
+		t.Fatalf("line one is %q, want %q", got, want)
 	}
 }
