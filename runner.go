@@ -200,10 +200,10 @@ func (r *runner) runTest(runID, target string, d defaults, t test, result *testR
 	state, failure := "passed", ""
 	if request, err := newRequest(target, d, t.request, vars); err != nil {
 		state, failure = "failed", "not sent: "+err.Error()
-	} else if response, body, err := send(runID, request, cmp.Or(t.Timeout, d.Timeout, "30s")); err != nil {
-		state, failure = "failed", "no response: "+err.Error()
+	} else if response, body, elapsed, err := send(runID, request, cmp.Or(t.Timeout, d.Timeout, "30s")); err != nil {
+		state, failure = "failed", failureText([]failedCheck{{text: "no response: " + err.Error()}}, request, t.JSON.Kind != 0, nil, nil, 0)
 	} else if checks, _ := checkResponse(t, response.StatusCode, response.Header, body, len(body) > maxResponseBody); checks != nil {
-		state, failure = "failed", lineOne(checks)
+		state, failure = "failed", failureText(checks, request, t.JSON.Kind != 0, response, body[:min(len(body), maxResponseBody)], elapsed)
 	}
 
 	r.mu.Lock()

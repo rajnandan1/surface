@@ -190,8 +190,8 @@ func TestTheRunnerReadsAtMost10MiBOfAResponseBody(t *testing.T) {
       status: `+strconv.Itoa(c.status)+`
 `)
 
-			if got := oneTest(t, result); got.Failure != c.failure {
-				t.Fatalf("test is %s with failure %q, want %q", got.State, got.Failure, c.failure)
+			if got := oneTest(t, result); lineOneOf(got.Failure) != c.failure {
+				t.Fatalf("test is %s with failure %q, want line one %q", got.State, got.Failure, c.failure)
 			}
 		})
 	}
@@ -227,8 +227,8 @@ func TestASlowTargetGivesNoResponseAfterTheTimeout(t *testing.T) {
       status: 200
 `)
 
-			if got := oneTest(t, result); got.Failure != c.failure {
-				t.Fatalf("test is %s with failure %q, want %q", got.State, got.Failure, c.failure)
+			if got := oneTest(t, result); lineOneOf(got.Failure) != c.failure {
+				t.Fatalf("test is %s with failure %q, want line one %q", got.State, got.Failure, c.failure)
 			}
 		})
 	}
@@ -246,7 +246,8 @@ func TestATargetThatRefusesTheConnectionGivesNoResponse(t *testing.T) {
       status: 200
 `)
 
-	if got, want := oneTest(t, result).Failure, "no response: connection refused"; got != want {
+	want := "no response: connection refused\n> GET " + target.URL + "/health\n> User-Agent: surface/" + version + " (run " + result.ID + ")"
+	if got := oneTest(t, result).Failure; got != want {
 		t.Fatalf("failure is %q, want %q", got, want)
 	}
 }
@@ -331,7 +332,7 @@ func TestNewRequestPutsVariableValuesIntoTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := send("01j9z3k4m5n6p7q8r9s0t1u2v3", request, "10s"); err != nil {
+	if _, _, _, err := send("01j9z3k4m5n6p7q8r9s0t1u2v3", request, "10s"); err != nil {
 		t.Fatal(err)
 	}
 
