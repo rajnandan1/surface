@@ -1,0 +1,83 @@
+name: surface
+description: Run the surface suites of this repo against a target on a surface runner, and fail the job when a test fails.
+
+inputs:
+  runner:
+    description: The runner's URL.
+    required: true
+  target:
+    description: The target the run calls, such as https://pr-123.preview.example.com.
+    required: true
+  suites:
+    description: The folder or file that holds the suites.
+    default: surface/
+  timeout:
+    description: The longest time the client waits for the run, as a Go duration.
+    default: 30m
+
+runs:
+  using: composite
+  steps:
+    - name: Pick the binary
+      id: pick
+      shell: bash
+      run: |
+        version=$(cat "$GITHUB_ACTION_PATH/VERSION")
+        case "$RUNNER_OS" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          Windows) os=windows ;;
+          *) os="" ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) arch="" ;;
+        esac
+        if [ -z "$os" ] || [ -z "$arch" ]; then
+          echo "surface: no binary for $RUNNER_OS/$RUNNER_ARCH" >&2
+          exit 2
+        fi
+        binary="surface_${version}_${os}_${arch}"
+        if [ "$os" = windows ]; then binary="$binary.exe"; fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "binary=$binary" >> "$GITHUB_OUTPUT"
+
+    - name: Download the binary
+      shell: bash
+      env:
+        VERSION: ${{ steps.pick.outputs.version }}
+        BINARY: ${{ steps.pick.outputs.binary }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/surface"
+        cd "$RUNNER_TEMP/surface"
+        release="https://github.com/rajnandan1/surface/releases/download/v$VERSION"
+        curl --fail --silent --show-error --location --remote-name "$release/$BINARY" --remote-name "$release/checksums.txt"
+
+    - name: Check the checksum
+      shell: bash
+      working-directory: ${{ runner.temp }}/surface
+      env:
+        BINARY: ${{ steps.pick.outputs.binary }}
+      run: |
+        want=$(awk -v name="$BINARY" '$2 == name { print $1 }' checksums.txt)
+        if command -v sha256sum > /dev/null; then
+          got=$(sha256sum "$BINARY" | cut -d ' ' -f 1)
+        else
+          got=$(shasum -a 256 "$BINARY" | cut -d ' ' -f 1)
+        fi
+        if [ -z "$want" ] || [ "$got" != "$want" ]; then
+          echo "surface: the SHA-256 of $BINARY does not match checksums.txt" >&2
+          exit 2
+        fi
+        chmod +x "$BINARY"
+
+    - name: Run the suites
+      shell: bash
+      env:
+        BINARY: ${{ steps.pick.outputs.binary }}
+        SURFACE_RUNNER: ${{ inputs.runner }}
+        SURFACE_TARGET: ${{ inputs.target }}
+        SURFACE_SUITES: ${{ inputs.suites }}
+        SURFACE_TIMEOUT: ${{ inputs.timeout }}
+      run: '"$RUNNER_TEMP/surface/$BINARY" run --runner "$SURFACE_RUNNER" --target "$SURFACE_TARGET" --timeout "$SURFACE_TIMEOUT" "$SURFACE_SUITES"'

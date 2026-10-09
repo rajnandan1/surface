@@ -1,0 +1,70 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the tag against VERSION
+        run: |
+          version=$(cat VERSION)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "release: tag $GITHUB_REF_NAME is not v$version, the text of VERSION" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build the binaries
+        run: |
+          version=$(cat VERSION)
+          mkdir dist
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              suffix=""
+              if [ "$os" = windows ]; then suffix=.exe; fi
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -o "dist/surface_${version}_${os}_${arch}${suffix}" .
+            done
+          done
+
+      - name: Write the checksums
+        working-directory: dist
+        run: sha256sum surface_* > checksums.txt
+
+      - name: Build and push the image
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --use
+          docker buildx build --platform linux/amd64,linux/arm64 --tag "ghcr.io/rajnandan1/surface:$(cat VERSION)" --push .
+
+      - name: Package and push the chart
+        run: |
+          echo "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          helm package charts/surface --destination chart
+          helm push "chart/surface-$(cat VERSION).tgz" oci://ghcr.io/rajnandan1/charts
+
+      - name: Create the draft release
+        run: gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" dist/*
+
+      - name: Publish the release
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
+
+      - name: Move the major version tag
+        run: |
+          version=$(cat VERSION)
+          git tag --force "v${version%%.*}" "$GITHUB_SHA"
+          git push --force origin "v${version%%.*}"
