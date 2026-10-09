@@ -143,7 +143,7 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 }
 
 func (r *runner) runSuite(target string, result *suiteResult, text string) {
-	tests, err := loadSuite(result.Path, text)
+	s, err := loadSuite(result.Path, text)
 	r.mu.Lock()
 	if err != nil {
 		result.State, result.Failure = "failed", err.Error()
@@ -151,14 +151,14 @@ func (r *runner) runSuite(target string, result *suiteResult, text string) {
 		return
 	}
 	result.State = "running"
-	for _, t := range tests {
+	for _, t := range s.Tests {
 		result.Tests = append(result.Tests, &testResult{Name: t.Name, State: "pending"})
 	}
 	entries := result.Tests
 	r.mu.Unlock()
 
 	var wg sync.WaitGroup
-	for i, t := range tests {
+	for i, t := range s.Tests {
 		wg.Go(func() { r.runTest(target, t, entries[i]) })
 	}
 	wg.Wait()

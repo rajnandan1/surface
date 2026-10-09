@@ -27,9 +27,11 @@ func cli(args []string, stdout, stderr io.Writer) int {
 			return serve(args[1:], stdout, stderr)
 		case "run":
 			return runCommand(args[1:], stdout, stderr)
+		case "check":
+			return checkCommand(args[1:], stdout, stderr)
 		}
 	}
-	fmt.Fprintln(stderr, "usage: surface serve --config <path>\n       surface run --runner <url> --target <url> [--timeout <duration>] <suites>")
+	fmt.Fprintln(stderr, "usage: surface serve --config <path>\n       surface run --runner <url> --target <url> [--timeout <duration>] <suites>\n       surface check <suites>")
 	return 2
 }
 
