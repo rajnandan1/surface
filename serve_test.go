@@ -41,7 +41,7 @@ func TestServeRefusesABadTargetList(t *testing.T) {
 	}
 	for _, c := range cases {
 		path := filepath.Join(t.TempDir(), "config.yaml")
-		if err := os.WriteFile(path, []byte("url: https://surface.example.com\n"+c.targets), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte("url: https://surface.example.com\n"+c.targets+"github:\n  owner_ids:\n    - 63745551\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 
@@ -57,7 +57,7 @@ func TestServeRefusesABadTargetList(t *testing.T) {
 
 func TestConfigReadsTargetStringsAndMappings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	config := "url: https://surface.example.com\ntargets:\n  - https://*.preview.crustdata.com\n  - url: https://staging.crustdata.com\n    rate: 20\n"
+	config := "url: https://surface.example.com\ntargets:\n  - https://*.preview.crustdata.com\n  - url: https://staging.crustdata.com\n    rate: 20\n" + "github:\n  owner_ids:\n    - 63745551\n"
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -68,5 +68,37 @@ func TestConfigReadsTargetStringsAndMappings(t *testing.T) {
 	}
 	if want := targetList(t, "https://*.preview.crustdata.com", "https://staging.crustdata.com:443"); !slices.Equal(c.targets, want) {
 		t.Fatalf("targets are %v, want %v", c.targets, want)
+	}
+}
+
+func TestServeRefusesABadOwnerList(t *testing.T) {
+	tests := []struct {
+		name   string
+		github string
+		error  string
+	}{
+		{"no github block", "", "github.owner_ids is missing or empty"},
+		{"an empty list", "github:\n  owner_ids: []\n", "github.owner_ids is missing or empty"},
+		{"an id of 0", "github:\n  owner_ids:\n    - 0\n", "line 6: an owner id must be a whole number of 1 or more"},
+		{"an id written as a string", "github:\n  owner_ids:\n    - \"63745551\"\n", "line 6: an owner id must be a whole number of 1 or more"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			config := "url: https://surface.example.com\ntargets:\n  - https://api.example.com\n" + test.github
+			if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			var stdout, stderr bytes.Buffer
+			code := cli([]string{"serve", "--config", path}, &stdout, &stderr)
+
+			if code == 0 {
+				t.Fatalf("exit code is 0, want the runner to refuse to start")
+			}
+			if want := "surface serve: " + path + ": " + test.error + "\n"; stderr.String() != want {
+				t.Fatalf("stderr is %q, want %q", stderr.String(), want)
+			}
+		})
 	}
 }
