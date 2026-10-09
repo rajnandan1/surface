@@ -87,7 +87,8 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: 6 passed, 1 failed
 - The runner answers the run request with `202 Accepted` and `{"id": "<run id>"}` as soon as the run is accepted. It holds no request open.
 - The client polls `GET /v1/runs/<id>` every 5 seconds.
 - On `401`, the client fetches a fresh token once and retries. On a `5xx` or a network error, it retries at the next poll. On `404`, it exits `2`: the run is unknown or no longer stored.
-- The wait limit is 30 minutes by default. The `timeout` input sets it. When it passes, the client exits `2` with `surface run: run <id> did not finish within 30m`. The run itself keeps running on the runner, bounded by the runner's own limits, which the map lists under "The runner shape".
+- On a `503` to the run request, the client sends the run request again every 5 seconds until the wait limit passes, because a `503` means the runner made no run ([runner.md](runner.md)). On a network error to the run request, it exits `2`, because the runner may have made the run.
+- The wait limit is 30 minutes by default. The `timeout` input sets it. When it passes, the client exits `2` with `surface run: run <id> did not finish within 30m`. The run itself keeps running on the runner, bounded by the run time limit ([What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)).
 - Why poll and not hold: ingresses and load balancers close an idle connection after about 60 seconds by default. A held request needs a timeout tuned on every install, and a dropped connection loses the result.
 
 ## Who may read a run
@@ -141,9 +142,10 @@ The poll, `GET /v1/runs/<id>`:
 - A run `state` is `queued`, `running`, `passed`, `failed`, `error`, or `cancelled`. The last four are final. `passed` means every test passed. `failed` means at least one test, suite, or cleanup failed and the run completed. `error` means the runner could not complete the run. `queued` exists so a later queue adds no new state.
 - A suite `state` is `pending`, `running`, `passed`, or `failed`. It is `failed` when any test or cleanup in it failed. A test `state` is one of those or `skipped` ([failure-text.md](failure-text.md)). A suite that fails at load ([secrets.md](secrets.md)) is `failed` with its `failure` text and no tests.
 - `failure` is present only on a failed or skipped test, or a failed suite. Its text is defined in [failure-text.md](failure-text.md). Secret values in it are already redacted ([secrets.md](secrets.md)).
+- `reason` is present only when the run `state` is `error`. It is one line that says why the runner could not complete the run, for example `runner stopped` ([runner.md](runner.md)).
 - `cleanup` is present on a test entry only when the test's cleanup ran. It holds `state`, `passed` or `failed`, and on `failed` a `failure` text in the same format ([data-safety.md](data-safety.md)).
 - The runner reads the caller from the token, never from the body.
-- How long a finished run stays readable is decided with the runner shape (the map's "Not yet specified").
+- A finished run stays readable for the retention period, 7 days by default. After that, `GET /v1/runs/<id>` answers `404` ([runner.md](runner.md)).
 
 ## The run id
 
@@ -166,7 +168,7 @@ The log, in this order:
 1. One first line with the client version, the run id, and the target.
 2. One line per suite, in sorted path order, with its passed, failed, skipped, and cleanup failed counts (skipped and cleanup failed are left out when zero), or its load failure.
 3. For each failed or skipped test, the suite path and the test name on one line, then the failure text indented by two spaces ([failure-text.md](failure-text.md)). For each failed cleanup, the same with ` cleanup` after the test name.
-4. One last line with the run id and the totals.
+4. One last line with the run id and the totals. When the run `state` is `error`, the last line is `run <id>: error: <reason>` instead ([runner.md](runner.md)).
 
 A rejected run request prints the runner's one-line reason, for example `run: target "http://10.0.0.5:8080" is not in the target list` ([targets.md](targets.md)), and exits `2`.
 
@@ -181,7 +183,7 @@ The client also writes:
 - The `surface` command is Go, in this repo, and shares the suite loader with the runner. It runs in any CI later; only the token fetch is GitHub-specific.
 - Inputs: `runner` (required), `target` (required), `suites` (default `surface/`), `timeout` (default `30m`). The action passes them to `surface run --runner <url> --target <url> --timeout <duration> <suites>`.
 - `surface check <path>` loads the suites under `<path>` and prints every load error the runner would print before any request: an unknown field, a bad path, a cycle in `needs`, a bad variable name. It prints one line per error with the file and the line, exits `1` on any error, and sends nothing. It cannot check secret group bindings or the target, because those live in the runner's config.
-- The runner's HTTP API has three routes: `POST /v1/runs`, `GET /v1/runs/<id>`, and `POST /v1/runs/<id>/cancel`.
+- The runner's HTTP API has three run routes, `POST /v1/runs`, `GET /v1/runs/<id>`, and `POST /v1/runs/<id>/cancel`, plus `GET /healthz`, which needs no token ([runner.md](runner.md)).
 
 ## Run request errors
 
@@ -190,7 +192,8 @@ A run request fails, with one line and no run id, when:
 - the token is missing, expired, has the wrong audience or issuer, or has a bad signature: `401`,
 - the body is over 16 MiB: `413`,
 - the body is not the shape above, or `target` is missing or malformed: `400` ([targets.md](targets.md)),
-- the target is not in the target list: `403`.
+- the target is not in the target list: `403`,
+- the runner holds as many runs in memory as its cap allows, or it is stopping: `503` with `Retry-After: 5`. No run was made, and the client sends the run request again ([runner.md](runner.md)).
 
 ```
 run: token audience "https://other.example.com" is not this runner
@@ -203,5 +206,5 @@ A suite that fails at load does not reject the run. The run starts, that suite i
 ## Known limits
 
 - A fork's pull request cannot start a run. A product that takes outside contributions runs surface on `main` after the merge, or on a branch a maintainer pushes.
-- A run keeps running, cleanups included, when the client stops polling without a cancel, for example when the job is killed. The runner's own run limit bounds it, and that limit is decided with the runner shape.
+- A run keeps running, cleanups included, when the client stops polling without a cancel, for example when the job is killed. The run time limit bounds it ([What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)).
 - The client trusts the `runner` URL it is given. A workflow that points at a wrong URL sends that URL a token with that URL as audience, and nothing else. The token names no secret and grants nothing at GitHub.

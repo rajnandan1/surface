@@ -124,7 +124,8 @@ The suite is `failed`, and the CI job exits `1`.
 - On `POST /v1/runs/<id>/cancel`, the runner starts no new test, lets in-flight requests finish or time out, runs the cleanups of the tests whose status check passed, in the order above, and then sets the run's `state` to `cancelled` ([runs.md](runs.md)).
 - The cancel adds at most one cleanup request, bounded by its timeout, per test that created data. The run's own time limit (decided in [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)) bounds the whole.
 - When the client stops polling without a cancel, for example when the job is killed, the run keeps running, cleanups included.
-- Known limit: when the runner itself cannot complete the run (the state `error`), the cleanups are not guaranteed. The data that is left carries the run id.
+- When the runner stops on SIGTERM, for example at a deploy, it cancels the runs in flight the same way, so the cleanups run, and the run's `state` becomes `error` with the reason `runner stopped` ([runner.md](runner.md)).
+- Known limit: when the runner crashes, the cleanups do not run. The runner marks the run `error` at its next start, and the data that is left carries the run id.
 
 ## A failed cleanup
 
@@ -153,5 +154,6 @@ The suite is `failed`, and the CI job exits `1`.
 - The failure text, and the one line of a skipped test: [failure-text.md](failure-text.md)
 - The cancel flow, the run and suite states, the wire shapes, the counts, the job summary, and the annotations: [runs.md](runs.md)
 - Redaction: [secrets.md](secrets.md)
+- What a runner restart does to a run in flight: [runner.md](runner.md)
 - The run's time limit and the request limits: [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)
 - Whether a failed test runs again, and whether its cleanup runs between tries: the map's "Not yet specified"

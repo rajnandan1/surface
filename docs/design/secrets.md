@@ -98,4 +98,4 @@ The other suites in the run still run. The report counts the failed suite as fai
 - The runner's ServiceAccount gets `get` on Secrets in that namespace, limited with `resourceNames` to the group Secrets.
 - Encryption at rest for Secrets, because Kubernetes stores them in plain text by default.
 
-The Helm chart and the exact RBAC are part of the install, which the map lists under "Not yet specified".
+The Helm chart and the exact RBAC are part of the install, decided in [How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13).

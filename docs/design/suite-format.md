@@ -174,4 +174,4 @@ The runner parses suites with `go.yaml.in/yaml/v3` at v3.0.5, the maintained for
 - How a run starts, who the caller is, and how the result comes back: [runs.md](runs.md)
 - What a failed test prints: [failure-text.md](failure-text.md)
 - Skipped tests, cleanup, and collisions between runs: [data-safety.md](data-safety.md)
-- The maximum timeout: the "runner shape" item in the map's "Not yet specified" section.
+- The maximum `timeout`: [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)

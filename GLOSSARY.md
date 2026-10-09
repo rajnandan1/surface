@@ -24,6 +24,10 @@ _Avoid_: Job, execution, build
 The message a CI job sends to start a run. It names the target and carries the suites.
 _Avoid_: Job request, submission, payload
 
+**Run result**:
+The record the runner keeps for one run: the run's state and the states and failure texts of its suites and tests. The client reads it while it waits, and the operator can read it after.
+_Avoid_: Report, results, output, run record
+
 **Client**:
 The surface command that runs inside a CI job, sends the run request, and waits for the result.
 _Avoid_: CLI, action, agent
