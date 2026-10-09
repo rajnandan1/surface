@@ -29,7 +29,7 @@ func TestImageRunsSurfaceServeAsUser65532AndAnswersHealthz(t *testing.T) {
 
 	image := docker("build", "-q", ".")
 	config := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(config, []byte("url: https://surface.example.com\ntargets:\n  - https://api.example.com\n"), 0o644); err != nil {
+	if err := os.WriteFile(config, []byte("url: https://surface.example.com\ntargets:\n  - https://api.example.com\ngithub:\n  owner_ids:\n    - 63745551\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	container := docker("run", "-d", "-p", "127.0.0.1::8080", "-v", config+":/etc/surface/config.yaml:ro", image)
