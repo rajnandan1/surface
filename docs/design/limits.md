@@ -62,7 +62,7 @@ The runner refuses to start when `limits.requests` or `limits.runs` is not a who
 ## Runs in memory
 
 - `limits.runs` caps the runs that the runner holds in memory. The default is 32. Above the cap, `POST /v1/runs` answers `503` with `Retry-After: 5`, and the client sends the run request again ([runner.md](runner.md)).
-- One run in memory holds up to 16 MiB of suite text plus the parsed suites. The operator sets the cap and the pod's memory limit together ([How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13)).
+- One run in memory holds up to 16 MiB of suite text plus the parsed suites. The operator sets the cap and the pod's memory limit together ([install.md](install.md)).
 - There is no cap on suites or tests per run. The 16 MiB cap on the run request, the cap on runs, and the run time limit bound a run.
 
 ## The per-target rate limit
@@ -116,5 +116,5 @@ The runner refuses to start when `limits.requests` or `limits.runs` is not a who
 - The 4 KiB cut and the check lines: [failure-text.md](failure-text.md)
 - The target list and how a target matches an entry: [targets.md](targets.md)
 - Cleanups and their order: [data-safety.md](data-safety.md)
-- The pod's memory limit and the grace period: [How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13)
+- The pod's memory limit and the grace period: [install.md](install.md)
 - Which owners may use the runner: [runs.md](runs.md)

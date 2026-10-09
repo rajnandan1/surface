@@ -36,7 +36,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: error: runner stopped
 - The runner is one Go process in one Kubernetes Deployment with one replica. Every run is a set of goroutines inside that process, one per request in flight, bounded by the pool in "Load" below.
 - The Deployment uses the `Recreate` strategy: Kubernetes stops the old pod before it starts the new one, because the volume below attaches to one pod at a time. The client survives the gap: on a connection error or a `5xx` it retries at the next poll ([runs.md](runs.md)).
 - The runner listens on plain HTTP on port 8080. TLS ends at the Ingress, and the Ingress URL is the `url` in the config and the token audience ([runs.md](runs.md)). GitHub-hosted runners have no fixed address, so the runner may sit on the public internet. Its guards are the ones in [runs.md](runs.md): the token check and the owner check run before the runner reads the body, the body is capped at 16 MiB, and every route but `GET /healthz` needs a valid token from an owner on `github.owner_ids`.
-- `GET /healthz` answers `200` while the runner accepts runs and `503` after it got SIGTERM. The chart uses it for the liveness and readiness probes.
+- `GET /healthz` answers `200` while the runner accepts runs and `503` after it got SIGTERM. The chart uses it for the readiness probe. The chart sets no liveness probe ([install.md](install.md)).
 - The namespace, the ServiceAccount, and the Role are the ones in [secrets.md](secrets.md). One process keeps that RBAC as it is, because no second pod has to read Secrets.
 - The runner writes its logs to stdout: one line when a run is accepted (the run id, the caller, the target) and one line when it ends (the run id, the state, the counts). It has no metrics endpoint in v1.
 - Why one process and not a Kubernetes Job per run: a test is one HTTP request, so one Go process holds thousands in flight. A Job per run needs RBAC to create Jobs, the Secrets RBAC on every Job pod, two components to install, and 5 to 30 seconds of pod start per run. A suite can only send HTTP requests ([ADR 0001](../adr/0001-suites-are-untrusted-input.md)), so a run needs no process of its own for safety.
@@ -54,7 +54,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: error: runner stopped
 ## A restart
 
 - On SIGTERM, the runner stops accepting run requests: `GET /healthz` and `POST /v1/runs` answer `503`. It then treats every run in flight like `POST /v1/runs/<id>/cancel`: it starts no new test, lets in-flight requests finish or time out, and runs the cleanups of the tests whose status check passed ([data-safety.md](data-safety.md)). Then it sets each run's `state` to `error` with the `reason` `runner stopped`, writes the files, and exits.
-- The grace period that Kubernetes gives the pod bounds the cancel. The chart sets it ([How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13)). When the grace period passes first, Kubernetes kills the pod, and the crash rule below applies.
+- The grace period that Kubernetes gives the pod bounds the cancel. The chart sets it to 15 minutes ([install.md](install.md)). When the grace period passes first, Kubernetes kills the pod, and the crash rule below applies.
 - At start, the runner reads every file in `results.dir`. A file whose `state` is not final belongs to a run that a crash or a kill interrupted. The runner sets its `state` to `error` with the `reason` `runner restarted` and writes it back. The cleanups of that run did not run, and the data that is left on the target carries the run id ([data-safety.md](data-safety.md)).
 - `reason` is a field of the run result, present only when `state` is `error`. It is one line. The client prints it as the last line of the CI log, `run <id>: error: <reason>`, and exits `2` ([runs.md](runs.md)).
 - Why cancel and not drain: a drain holds the old pod for up to the run time limit, and with one replica and one volume no new run can start until it exits. A cancel fails the interrupted CI runs with a clear reason, and the developer re-runs the job. A drain can come later with no design change.
@@ -72,7 +72,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: error: runner stopped
 - At start and then once an hour, the runner deletes every run result file whose run id time is older than `results.retention`.
 - After that, `GET /v1/runs/<id>` answers `404`, and the client exits `2` ([runs.md](runs.md)). The client never meets this, because its wait limit is far shorter than the retention.
 - Why 7 days: in v1 the only reader after the client has printed the result is an operator who debugs a run, and a week covers that.
-- Size: a run with 1,000 tests and 100 failures is about 1 MiB, because the run result holds one failure text of at most about 8 KiB per failed test and a few bytes per passed test ([failure-text.md](failure-text.md)). A volume of 1 GiB holds about 1,000 such runs. The chart sets the default size ([How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13)).
+- Size: a run with 1,000 tests and 100 failures is about 1 MiB, because the run result holds one failure text of at most about 8 KiB per failed test and a few bytes per passed test ([failure-text.md](failure-text.md)). A volume of 1 GiB holds about 1,000 such runs. The chart sets the default size to 1 GiB ([install.md](install.md)).
 
 ## Known limits
 
@@ -87,4 +87,4 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: error: runner stopped
 - Cleanups on cancel: [data-safety.md](data-safety.md)
 - The namespace, the ServiceAccount, and the Secrets RBAC: [secrets.md](secrets.md)
 - N, the caps, the timeouts, the run time limit, and the per-target rate limit: [limits.md](limits.md)
-- The chart, the volume size, the grace period, the Ingress, and the release: [How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13)
+- The chart, the volume size, the grace period, the Ingress, and the release: [install.md](install.md)

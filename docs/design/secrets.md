@@ -46,6 +46,7 @@ stringData:
 
 - Secret values live in Kubernetes Secrets in the runner's namespace, one Kubernetes Secret per secret group.
 - The runner reads a group from the Kubernetes API when a run starts. It reads only the groups that the run's suites reference. It keeps the values in memory for that run and reads them again at the next run. So a rotated value takes effect at the next run, with no restart.
+- The runner calls the Kubernetes API with `net/http`: `GET /api/v1/namespaces/<namespace>/secrets/<name>` on `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`. It sends the ServiceAccount token from `/var/run/secrets/kubernetes.io/serviceaccount/token` and checks the server with `ca.crt` from the same folder, where it also reads `namespace`. It reads the token file again for each call, because the kubelet rotates the token. `k8s.io/client-go` is at v0.x, so it fails the library rule of [ADR 0002](../adr/0002-own-suite-format-and-engine.md).
 - An organization that keeps secrets in Vault or a cloud store fills the Kubernetes Secrets with the External Secrets Operator or a similar controller. Surface has no code for any store.
 - The CI job sends no secret values. Only the runner holds them.
 
@@ -99,4 +100,4 @@ The other suites in the run still run. The report counts the failed suite as fai
 - The runner's ServiceAccount gets `get` on Secrets in that namespace, limited with `resourceNames` to the group Secrets.
 - Encryption at rest for Secrets, because Kubernetes stores them in plain text by default.
 
-The Helm chart and the exact RBAC are part of the install, decided in [How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13).
+The Helm chart and the exact RBAC are in [install.md](install.md).

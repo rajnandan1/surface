@@ -103,7 +103,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: 6 passed, 1 failed
 
 - The runner answers the run request with `202 Accepted` and `{"id": "<run id>"}` as soon as the run is accepted. It holds no request open.
 - The client polls `GET /v1/runs/<id>` every 5 seconds.
-- On `401`, the client fetches a fresh token once and retries. On `403`, it exits `2` with the runner's line. On a `5xx` or a network error, it retries at the next poll. On `404`, it exits `2`: the run is unknown or no longer stored.
+- On `401`, the client fetches a fresh token once and retries. On `403`, it exits `2` with the runner's line. On a `5xx` or a network error, it retries at the next poll. On `404`, it exits `2`: the run is unknown or no longer stored. A `404` to the run request means the runner has no `/v1/` routes, and the client exits `2` with `surface run: runner at <url> has no /v1/runs: it may be a different major version` ([install.md](install.md)).
 - On a `503` to the run request, the client sends the run request again every 5 seconds until the wait limit passes, because a `503` means the runner made no run ([runner.md](runner.md)). On a network error to the run request, it exits `2`, because the runner may have made the run.
 - The wait limit is 30 minutes by default. The `timeout` input sets it. When it passes, the client exits `2` with `surface run: run <id> did not finish within 30m`. The run itself keeps running on the runner, bounded by the run time limit, 30m by default ([limits.md](limits.md)).
 - Why poll and not hold: ingresses and load balancers close an idle connection after about 60 seconds by default. A held request needs a timeout tuned on every install, and a dropped connection loses the result.
@@ -196,8 +196,8 @@ The client also writes:
 
 ## The action and the client
 
-- The action lives at `action.yml` in this repo, so `uses: rajnandan1/surface@v1` works. It is a composite action (a list of workflow steps in YAML). It downloads the `surface` binary for the job's OS and architecture from the release that matches the action's version, checks its checksum, and runs `surface run`.
-- The `surface` command is Go, in this repo, and shares the suite loader with the runner. It runs in any CI later; only the token fetch is GitHub-specific.
+- The action lives at `action.yml` in this repo, so `uses: rajnandan1/surface@v1` works. It is a composite action (a list of workflow steps in YAML). It downloads the `surface` binary for the job's OS and architecture from the release that matches the action's version, checks its checksum, and runs `surface run`. The action reads its version from the `VERSION` file in its own files ([install.md](install.md)).
+- The `surface` command is Go, in this repo. It is one binary with the runner: `surface serve` runs the runner ([install.md](install.md)). It runs in any CI later; only the token fetch is GitHub-specific.
 - Inputs: `runner` (required), `target` (required), `suites` (default `surface/`), `timeout` (default `30m`). The action passes them to `surface run --runner <url> --target <url> --timeout <duration> <suites>`.
 - `surface check <path>` loads the suites under `<path>` and prints every load error the runner would print before any request: an unknown field, a bad path, a cycle in `needs`, a bad variable name. It prints one line per error with the file and the line, exits `1` on any error, and sends nothing. It cannot check secret group bindings or the target, because those live in the runner's config.
 - The runner's HTTP API has three run routes, `POST /v1/runs`, `GET /v1/runs/<id>`, and `POST /v1/runs/<id>/cancel`, plus `GET /healthz`, which needs no token ([runner.md](runner.md)).
@@ -209,7 +209,7 @@ A run request fails, with one line and no run id, when:
 - the token is missing, expired, has the wrong audience or issuer, or has a bad signature: `401`,
 - the token's `repository_owner_id` is not in `github.owner_ids`: `403`,
 - the body is over 16 MiB: `413`,
-- the body is not the shape above, or `target` is missing or malformed: `400` ([targets.md](targets.md)),
+- the body is not the shape above, or `target` is missing or malformed: `400` ([targets.md](targets.md)). A field the runner does not know is `400`, and the line ends with the runner's version ([install.md](install.md)),
 - the target is not in the target list: `403`,
 - the runner holds as many runs in memory as its cap allows, or it is stopping: `503` with `Retry-After: 5`. No run was made, and the client sends the run request again ([runner.md](runner.md)).
 
@@ -218,6 +218,7 @@ run: token audience "https://other.example.com" is not this runner
 run: repo "someone/api" (owner id 98765) may not use this runner
 run: target is missing
 run: target "http://10.0.0.5:8080" is not in the target list
+run: unknown field "targets" (runner 1.1.0)
 ```
 
 A suite that fails at load does not reject the run. The run starts, that suite is `failed`, and the other suites run ([secrets.md](secrets.md)).
