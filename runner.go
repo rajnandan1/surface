@@ -42,17 +42,19 @@ type testResult struct {
 }
 
 type runner struct {
-	log    *log.Logger
-	client *http.Client
-	mu     sync.Mutex
-	runs   map[string]*runResult
+	log     *log.Logger
+	client  *http.Client
+	targets []target
+	mu      sync.Mutex
+	runs    map[string]*runResult
 }
 
-func newRunner(logTo io.Writer) http.Handler {
+func newRunner(logTo io.Writer, targets []target) http.Handler {
 	r := &runner{
-		log:    log.New(logTo, "", 0),
-		client: &http.Client{Timeout: 30 * time.Second},
-		runs:   map[string]*runResult{},
+		log:     log.New(logTo, "", 0),
+		client:  &http.Client{Timeout: 30 * time.Second},
+		targets: targets,
+		runs:    map[string]*runResult{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", r.start)
@@ -73,6 +75,22 @@ func (r *runner) start(w http.ResponseWriter, req *http.Request) {
 		} else {
 			http.Error(w, "run: body is not a run request: "+strings.TrimPrefix(err.Error(), "json: "), http.StatusBadRequest)
 		}
+		return
+	}
+	if request.Target == "" {
+		http.Error(w, "run: target is missing", http.StatusBadRequest)
+		return
+	}
+	parsed, err := parseTarget(request.Target)
+	if err == nil && strings.Contains(parsed.host, "*") {
+		err = fmt.Errorf("target %q must not have a *", request.Target)
+	}
+	if err != nil {
+		http.Error(w, "run: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !slices.ContainsFunc(r.targets, func(entry target) bool { return entry.matches(parsed) }) {
+		http.Error(w, fmt.Sprintf("run: target %q is not in the target list", request.Target), http.StatusForbidden)
 		return
 	}
 

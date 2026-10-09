@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -34,7 +35,7 @@ func TestRunPrintsTheResultAndExits1WhenATestFails(t *testing.T) {
 		}
 	}))
 	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard))
+	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL)))
 	defer runner.Close()
 	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
 	pollInterval = 10 * time.Millisecond
@@ -65,6 +66,37 @@ run <id>: 1 passed, 1 failed
 `
 	if log != want {
 		t.Fatalf("CI log is\n%s\nwant\n%s", log, want)
+	}
+}
+
+func TestRunWithATargetNotInTheTargetListSendsNoRequest(t *testing.T) {
+	var requests atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer target.Close()
+	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, "https://api.crustdata.com")))
+	defer runner.Close()
+	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
+	pollInterval = 10 * time.Millisecond
+
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll("surface/api", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("surface/api/users.yaml", []byte(usersSuite), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "--timeout", "1m", "surface/"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("exit code is %d, want 2\nstdout:\n%s\nstderr:\n%s", code, &stdout, &stderr)
+	}
+	if want := `run: target "` + target.URL + `" is not in the target list` + "\n"; stderr.String() != want {
+		t.Fatalf("stderr is %q, want %q", stderr.String(), want)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Fatalf("the target got %d requests, want 0", n)
 	}
 }
 
