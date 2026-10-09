@@ -12,10 +12,13 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -46,17 +49,31 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	signaled, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signaled, timeout)
 	defer cancel()
-	runner := strings.TrimSuffix(*runnerURL, "/")
-	id, err := startRun(ctx, runner, runRequest{Target: *target, Suites: suites})
+	runner := &runnerAPI{url: strings.TrimSuffix(*runnerURL, "/")}
+	if runner.token, err = fetchToken(ctx, runner.url); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	id, err := runner.start(ctx, runRequest{Target: *target, Suites: suites})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	fmt.Fprintf(stdout, "surface %s run %s target %s\n", version, id, *target)
 
-	result, err := waitForRun(ctx, runner, id)
+	result, err := runner.wait(ctx, id)
+	if signaled.Err() != nil {
+		line := fmt.Sprintf("surface run: %v: cancelled run %s", context.Cause(signaled), id)
+		if err := runner.cancel(id); err != nil {
+			line = fmt.Sprintf("surface run: %v: the cancel of run %s failed: %v", context.Cause(signaled), id, err)
+		}
+		fmt.Fprintln(stderr, line)
+		return 2
+	}
 	if err != nil && ctx.Err() != nil {
 		fmt.Fprintf(stderr, "surface run: run %s did not finish within %s\n", id, *timeoutText)
 		return 2
@@ -126,12 +143,42 @@ func collectSuites(root string) (map[string]string, error) {
 	return suites, err
 }
 
-func startRun(ctx context.Context, runner string, request runRequest) (string, error) {
+func fetchToken(ctx context.Context, audience string) (string, error) {
+	requestURL, requestToken := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"), os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+	if requestURL == "" || requestToken == "" {
+		return "", errors.New("surface run: no OIDC token: not inside GitHub Actions, or the job is missing permissions: id-token: write")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL+"&audience="+url.QueryEscape(audience), nil)
+	if err != nil {
+		return "", fmt.Errorf("surface run: no OIDC token: %v", err)
+	}
+	request.Header.Set("Authorization", "bearer "+requestToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("surface run: no OIDC token: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("surface run: no OIDC token: GitHub answered %s", response.Status)
+	}
+	var answer struct{ Value string }
+	if err := json.NewDecoder(response.Body).Decode(&answer); err != nil || answer.Value == "" {
+		return "", errors.New("surface run: no OIDC token: GitHub's answer has no value")
+	}
+	return answer.Value, nil
+}
+
+type runnerAPI struct {
+	url   string
+	token string
+}
+
+func (runner *runnerAPI) start(ctx context.Context, request runRequest) (string, error) {
 	body, err := json.Marshal(request)
 	if err != nil {
 		return "", err
 	}
-	response, err := send(ctx, http.MethodPost, runner+"/v1/runs", bytes.NewReader(body))
+	response, err := runner.send(ctx, http.MethodPost, "/v1/runs", body)
 	for err == nil && response.StatusCode == http.StatusServiceUnavailable {
 		full := runnerLine(response)
 		response.Body.Close()
@@ -140,7 +187,7 @@ func startRun(ctx context.Context, runner string, request runRequest) (string, e
 			return "", full
 		case <-time.After(pollInterval):
 		}
-		response, err = send(ctx, http.MethodPost, runner+"/v1/runs", bytes.NewReader(body))
+		response, err = runner.send(ctx, http.MethodPost, "/v1/runs", body)
 	}
 	if err != nil {
 		return "", err
@@ -156,9 +203,23 @@ func startRun(ctx context.Context, runner string, request runRequest) (string, e
 	return accepted.ID, nil
 }
 
-func waitForRun(ctx context.Context, runner, id string) (runResult, error) {
+func (runner *runnerAPI) cancel(id string) error {
+	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
+	response, err := runner.send(ctx, http.MethodPost, "/v1/runs/"+id+"/cancel", nil)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		return runnerLine(response)
+	}
+	return nil
+}
+
+func (runner *runnerAPI) wait(ctx context.Context, id string) (runResult, error) {
 	for {
-		result, err := pollRun(ctx, runner, id)
+		result, err := runner.poll(ctx, id)
 		if err != nil || isFinal(result.State) {
 			return result, err
 		}
@@ -170,9 +231,9 @@ func waitForRun(ctx context.Context, runner, id string) (runResult, error) {
 	}
 }
 
-func pollRun(ctx context.Context, runner, id string) (runResult, error) {
+func (runner *runnerAPI) poll(ctx context.Context, id string) (runResult, error) {
 	var result runResult
-	response, err := send(ctx, http.MethodGet, runner+"/v1/runs/"+id, nil)
+	response, err := runner.send(ctx, http.MethodGet, "/v1/runs/"+id, nil)
 	if err != nil {
 		return result, err
 	}
@@ -186,11 +247,24 @@ func pollRun(ctx context.Context, runner, id string) (runResult, error) {
 	return result, nil
 }
 
-func send(ctx context.Context, method, url string, body io.Reader) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, method, url, body)
+func (runner *runnerAPI) send(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+	response, err := runner.sendOnce(ctx, method, path, body)
+	if err != nil || response.StatusCode != http.StatusUnauthorized {
+		return response, err
+	}
+	response.Body.Close()
+	if runner.token, err = fetchToken(ctx, runner.url); err != nil {
+		return nil, err
+	}
+	return runner.sendOnce(ctx, method, path, body)
+}
+
+func (runner *runnerAPI) sendOnce(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, method, runner.url+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("surface run: %v", err)
 	}
+	request.Header.Set("Authorization", "Bearer "+runner.token)
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -228,7 +302,14 @@ func printResult(w io.Writer, result runResult) {
 			if t.Failure != "" {
 				fmt.Fprintf(w, "\n%s %s\n  %s\n", suite.Path, t.Name, strings.ReplaceAll(t.Failure, "\n", "\n  "))
 			}
+			if t.Cleanup != nil && t.Cleanup.Failure != "" {
+				fmt.Fprintf(w, "\n%s %s cleanup\n  %s\n", suite.Path, t.Name, strings.ReplaceAll(t.Cleanup.Failure, "\n", "\n  "))
+			}
 		}
+	}
+	if result.State == "error" {
+		fmt.Fprintf(w, "\nrun %s: error: %s\n", result.ID, result.Reason)
+		return
 	}
 	fmt.Fprintf(w, "\nrun %s: %s\n", result.ID, countTests(result.Suites...))
 }

@@ -10,9 +10,8 @@ import (
 
 func postRun(t *testing.T, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	response := httptest.NewRecorder()
-	newRunner(io.Discard, targetList(t, "https://api.crustdata.com", "https://*.preview.crustdata.com"), defaultLimits).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/runs", strings.NewReader(body)))
-	return response
+	issuer := newFakeIssuer(t)
+	return call(newTestRunner(t, issuer, io.Discard, runnerURL, "https://api.crustdata.com", "https://*.preview.crustdata.com"), http.MethodPost, "/v1/runs", issuer.sign(issuer.claims(runnerURL)), strings.NewReader(body))
 }
 
 func targetList(t *testing.T, entries ...string) []target {

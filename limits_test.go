@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,30 +31,21 @@ func suiteOf(n int) string {
 	return b.String()
 }
 
-func startRunOn(t *testing.T, runner, target, suite string) string {
+func boundedRunner(t *testing.T, issuer *fakeIssuer, url string, c config) *runner {
 	t.Helper()
-	id, err := startRun(t.Context(), runner, runRequest{Target: target, Suites: map[string]string{"surface/api/load.yaml": suite}})
+	c.url, c.issuer, c.ownerIDs = url, issuer.url, []string{crustdataOwnerID}
+	runner, err := newRunner(io.Discard, c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return id
+	return runner
 }
 
-func waitForPass(t *testing.T, runner, id string) {
+func waitForPass(t *testing.T, runner http.Handler, token, id string) {
 	t.Helper()
-	result, err := waitForRun(t.Context(), runner, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.State != "passed" {
+	if result := waitForRun(t, runner, token, id); result.State != "passed" {
 		t.Fatalf("run %s is %s, want passed: %+v", id, result.State, result.Suites[0])
 	}
-}
-
-func fastPolls(t *testing.T) {
-	interval := pollInterval
-	pollInterval = 10 * time.Millisecond
-	t.Cleanup(func() { pollInterval = interval })
 }
 
 func TestThePoolCapsTheRequestsInFlight(t *testing.T) {
@@ -70,77 +62,97 @@ func TestThePoolCapsTheRequestsInFlight(t *testing.T) {
 		mu.Unlock()
 	}))
 	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL), limits{requests: 2, runs: 32}))
-	defer runner.Close()
-	fastPolls(t)
+	issuer := newFakeIssuer(t)
+	token := issuer.sign(issuer.claims(runnerURL))
+	runner := boundedRunner(t, issuer, runnerURL, config{targets: targetList(t, target.URL), requests: 2})
 
-	waitForPass(t, runner.URL, startRunOn(t, runner.URL, target.URL, suiteOf(10)))
+	waitForPass(t, runner, token, startRun(t, runner, token, target.URL, suiteOf(10)))
 
 	if most != 2 {
 		t.Fatalf("the target saw at most %d requests in flight, want 2", most)
 	}
 }
 
-func TestARunAboveTheCapGets503AndTheClientTriesAgain(t *testing.T) {
+func TestTheRunnerDefaultsToAPoolOf128(t *testing.T) {
+	runner := boundedRunner(t, newFakeIssuer(t), runnerURL, config{targets: targetList(t, "https://api.crustdata.com")})
+
+	if size := cap(runner.pool); size != 128 {
+		t.Fatalf("the pool has %d slots, want 128", size)
+	}
+}
+
+func TestARunAboveTheCapGets503WithRetryAfter5(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { time.Sleep(time.Second) }))
+	defer target.Close()
+	issuer := newFakeIssuer(t)
+	token := issuer.sign(issuer.claims(runnerURL))
+	runner := boundedRunner(t, issuer, runnerURL, config{targets: targetList(t, target.URL), runs: 1})
+
+	first := startRun(t, runner, token, target.URL, suiteOf(1))
+	response := call(runner, http.MethodPost, "/v1/runs", token, strings.NewReader(fmt.Sprintf(`{"target": %q, "suites": {}}`, target.URL)))
+
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Retry-After") != "5" {
+		t.Fatalf("the second run request gets %d with Retry-After %q, want 503 with 5", response.Code, response.Header().Get("Retry-After"))
+	}
+	if want := "run: the runner holds as many runs as its cap of 1 allows\n"; response.Body.String() != want {
+		t.Fatalf("the 503 body is %q, want %q", response.Body, want)
+	}
+	waitForPass(t, runner, token, first)
+}
+
+func TestTheClientSendsTheRunRequestAgainAfterA503(t *testing.T) {
 	release := make(chan struct{})
 	open := sync.OnceFunc(func() { close(release) })
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
 	defer target.Close()
 	defer open()
-	handler := newRunner(io.Discard, targetList(t, target.URL), limits{requests: 128, runs: 1})
+	issuer := newFakeIssuer(t)
+	fakeGitHubJob(t, func(audience string) string { return issuer.sign(issuer.claims(audience)) })
+	var runner *runner
 	var posts atomic.Int64
-	runner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handler.ServeHTTP(w, r)
-		if r.Method == http.MethodPost && posts.Add(1) == 3 {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runner.ServeHTTP(w, r)
+		if r.Method == http.MethodPost && posts.Add(1) == 2 {
 			open()
 		}
 	}))
-	defer runner.Close()
-	fastPolls(t)
+	defer server.Close()
+	runner = boundedRunner(t, issuer, server.URL, config{targets: targetList(t, target.URL), runs: 1})
+	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
+	pollInterval = 10 * time.Millisecond
 
-	startRunOn(t, runner.URL, target.URL, usersSuite)
-	body, err := json.Marshal(runRequest{Target: target.URL, Suites: map[string]string{"surface/api/users.yaml": usersSuite}})
-	if err != nil {
-		t.Fatal(err)
+	body, _ := json.Marshal(runRequest{Target: target.URL, Suites: map[string]string{"surface/api/users.yaml": usersSuite}})
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/runs", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+issuer.sign(issuer.claims(server.URL)))
+	first, err := http.DefaultClient.Do(request)
+	if err != nil || first.StatusCode != http.StatusAccepted {
+		t.Fatalf("the first run request gets %v, %v, want 202", first, err)
 	}
-	response, err := http.Post(runner.URL+"/v1/runs", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	line, _ := io.ReadAll(response.Body)
-	response.Body.Close()
-	if response.StatusCode != http.StatusServiceUnavailable || response.Header.Get("Retry-After") != "5" {
-		t.Fatalf("the second run request gets %d with Retry-After %q, want 503 with 5", response.StatusCode, response.Header.Get("Retry-After"))
-	}
-	if want := "run: the runner holds as many runs as its cap of 1 allows\n"; string(line) != want {
-		t.Fatalf("the 503 body is %q, want %q", line, want)
-	}
+	inRepoWithASuite(t)
 
-	t.Chdir(t.TempDir())
-	writeSuite(t, "surface/api/users.yaml", usersSuite)
 	var stdout, stderr bytes.Buffer
-	code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "--timeout", "10s", "surface/"}, &stdout, &stderr)
+	code := cli([]string{"run", "--runner", server.URL, "--target", target.URL, "--timeout", "10s", "surface/"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code is %d, want 0\nstdout:\n%s\nstderr:\n%s", code, &stdout, &stderr)
 	}
-	if n := posts.Load(); n < 4 {
-		t.Fatalf("the runner got %d run requests, want the client's 503 and its next try on top of the first 2", n)
+	if n := posts.Load(); n < 3 {
+		t.Fatalf("the runner got %d run requests, want the first run's, the client's 503, and the client's next try", n)
 	}
 }
 
 func TestTwoRunsOnOneTargetShareItsRate(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer api.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, []target{rated(t, api.URL, 10)}, defaultLimits))
-	defer runner.Close()
-	fastPolls(t)
+	issuer := newFakeIssuer(t)
+	token := issuer.sign(issuer.claims(runnerURL))
+	runner := boundedRunner(t, issuer, runnerURL, config{targets: []target{rated(t, api.URL, 10)}})
 
 	began := time.Now()
-	first := startRunOn(t, runner.URL, api.URL, suiteOf(10))
-	second := startRunOn(t, runner.URL, api.URL, suiteOf(10))
-	waitForPass(t, runner.URL, first)
-	waitForPass(t, runner.URL, second)
+	first := startRun(t, runner, token, api.URL, suiteOf(10))
+	second := startRun(t, runner, token, api.URL, suiteOf(10))
+	waitForPass(t, runner, token, first)
+	waitForPass(t, runner, token, second)
 
 	if took := time.Since(began); took < 1900*time.Millisecond {
 		t.Fatalf("20 requests at rate 10 took %v, want at least 1.9s", took)
@@ -148,22 +160,19 @@ func TestTwoRunsOnOneTargetShareItsRate(t *testing.T) {
 }
 
 func TestEachTargetGetsOneRateAfterTheDefaultPortIsFilledIn(t *testing.T) {
-	r := &runner{
-		targets: []target{
-			rated(t, "https://*.preview.crustdata.com", 50),
-			rated(t, "https://api.crustdata.com", 20),
-			rated(t, "https://api.crustdata.com:443", 5),
-			targetList(t, "https://staging.crustdata.com")[0],
-		},
-		rates: map[target]*rateLimit{},
-	}
-	rateOf := func(text string) *rateLimit { return r.rateLimitFor(targetList(t, text)[0]) }
+	runner := boundedRunner(t, newFakeIssuer(t), runnerURL, config{targets: []target{
+		rated(t, "https://*.preview.crustdata.com", 50),
+		rated(t, "https://api.crustdata.com", 20),
+		rated(t, "https://api.crustdata.com:443", 5),
+		targetList(t, "https://staging.crustdata.com")[0],
+	}})
+	rateOf := func(text string) *rateLimit { return runner.rateLimitFor(targetList(t, text)[0]) }
 
 	if rateOf("https://pr-1.preview.crustdata.com") == rateOf("https://pr-2.preview.crustdata.com") {
 		t.Errorf("two hosts under one wildcard entry share one rate, want one each")
 	}
-	if rateOf("https://pr-1.preview.crustdata.com").every != time.Second/50 {
-		t.Errorf("pr-1 gets one request every %v, want every %v", rateOf("https://pr-1.preview.crustdata.com").every, time.Second/50)
+	if every := rateOf("https://pr-1.preview.crustdata.com").every; every != time.Second/50 {
+		t.Errorf("pr-1 gets one request every %v, want every %v", every, time.Second/50)
 	}
 	if rateOf("https://api.crustdata.com") != rateOf("https://API.crustdata.com:443") {
 		t.Errorf("https://api.crustdata.com and https://API.crustdata.com:443 get two rates, want one")
@@ -177,20 +186,64 @@ func TestEachTargetGetsOneRateAfterTheDefaultPortIsFilledIn(t *testing.T) {
 }
 
 func TestARequestWaitingForItsRateHoldsNoPoolSlot(t *testing.T) {
-	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	seen := make(chan struct{}, 2)
+	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { seen <- struct{}{} }))
 	defer slow.Close()
 	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer other.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, []target{rated(t, slow.URL, 1), targetList(t, other.URL)[0]}, limits{requests: 1, runs: 32}))
-	defer runner.Close()
-	fastPolls(t)
+	issuer := newFakeIssuer(t)
+	token := issuer.sign(issuer.claims(runnerURL))
+	runner := boundedRunner(t, issuer, runnerURL, config{targets: []target{rated(t, slow.URL, 1), targetList(t, other.URL)[0]}, requests: 1})
 
-	slowRun := startRunOn(t, runner.URL, slow.URL, suiteOf(2))
+	slowRun := startRun(t, runner, token, slow.URL, suiteOf(2))
+	<-seen
 	began := time.Now()
-	waitForPass(t, runner.URL, startRunOn(t, runner.URL, other.URL, suiteOf(1)))
+	waitForPass(t, runner, token, startRun(t, runner, token, other.URL, suiteOf(1)))
 
 	if took := time.Since(began); took > 500*time.Millisecond {
 		t.Fatalf("the run on the other target took %v, want under 500ms while the slow target's second request waits 1s for its rate", took)
 	}
-	waitForPass(t, runner.URL, slowRun)
+	waitForPass(t, runner, token, slowRun)
+}
+
+func TestACancelledRunSendsNoTestStillWaitingForItsTurn(t *testing.T) {
+	seen := make(chan struct{}, 3)
+	api := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { seen <- struct{}{} }))
+	defer api.Close()
+	issuer := newFakeIssuer(t)
+	token := issuer.sign(issuer.claims(runnerURL))
+	runner := boundedRunner(t, issuer, runnerURL, config{targets: []target{rated(t, api.URL, 4)}})
+
+	id := startRun(t, runner, token, api.URL, suiteOf(3))
+	<-seen
+	call(runner, http.MethodPost, "/v1/runs/"+id+"/cancel", token, nil)
+	result := waitForRun(t, runner, token, id)
+
+	pending := 0
+	for _, test := range result.Suites[0].Tests {
+		if test.State == "pending" {
+			pending++
+		}
+	}
+	if sent := 1 + len(seen); result.State != "cancelled" || sent != 1 || pending != 2 {
+		t.Fatalf("run is %s, the target got %d requests, and %d tests are pending, want cancelled, 1, and 2", result.State, sent, pending)
+	}
+}
+
+func TestACleanupWhoseTurnComesAfterTheWindowIsNotSent(t *testing.T) {
+	defer func(window time.Duration) { cleanupWindow = window }(cleanupWindow)
+	cleanupWindow = 50 * time.Millisecond
+	api := newSlowTarget(t, 0, 0)
+	issuer := newFakeIssuer(t)
+	token := issuer.sign(issuer.claims(runnerURL))
+	runner := boundedRunner(t, issuer, runnerURL, config{targets: []target{rated(t, api.URL, 1)}, runTime: "50ms"})
+
+	result := waitForRun(t, runner, token, startRun(t, runner, token, api.URL, header+createThingSuite))
+
+	if cleanup := result.Suites[0].Tests[0].Cleanup; cleanup == nil || *cleanup != (cleanupResult{"failed", "not sent: run time limit passed"}) {
+		t.Fatalf("the cleanup is %+v, want failed with not sent: run time limit passed", cleanup)
+	}
+	if want := []string{"POST /things"}; !slices.Equal(api.requests(), want) {
+		t.Fatalf("the target got %q, want %q", api.requests(), want)
+	}
 }
