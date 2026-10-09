@@ -1,0 +1,288 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway. Three variants of the CI log for a failed surface run,
+     switchable with the bottom bar or the arrow keys. The variant is in the URL hash
+     (#A, #B, #C) because this file opens from file://. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prototype: what a failed test prints</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 24px 16px 96px; background: #0d1117; color: #c9d1d9;
+         font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 980px; margin-inline: auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; color: #f0f6fc; }
+  h2 { font-size: 15px; margin: 32px 0 8px; color: #f0f6fc; }
+  p, li { color: #8b949e; }
+  .note { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; margin: 12px 0; }
+  .note b { color: #c9d1d9; }
+  .note ul { margin: 6px 0 0; padding-left: 18px; }
+  .log { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px 14px; overflow-x: auto; }
+  pre { margin: 0; white-space: pre; }
+  details { margin: 0; }
+  summary { cursor: pointer; color: #58a6ff; list-style: none; }
+  summary::before { content: "▸ "; }
+  details[open] > summary::before { content: "▾ "; }
+  details > pre { padding-left: 2ch; }
+  .hdr { color: #f0f6fc; font-weight: 600; }
+  .del, .bad { color: #ff7b72; }
+  .add, .ok { color: #3fb950; }
+  .dim { color: #8b949e; }
+  .sec { color: #d2a8ff; }
+  .ann { border-color: #3d3100; background: #1c1800; }
+  .variant { display: none; }
+  .variant:target { display: block; }
+  #bar { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+         background: #f0f6fc; color: #0d1117; border-radius: 999px; padding: 8px 10px;
+         display: flex; gap: 12px; align-items: center; box-shadow: 0 4px 20px rgba(0,0,0,.6); font-weight: 600; }
+  #bar button { all: unset; cursor: pointer; padding: 2px 10px; border-radius: 999px; }
+  #bar button:hover { background: #d0d7de; }
+  code { color: #c9d1d9; }
+</style>
+</head>
+<body>
+
+<h1>Prototype: what a failed test prints</h1>
+<p>One run, two suites, four tests: <code>search-person</code> passes, <code>no-token-is-rejected</code> fails on the status code,
+<code>create-user</code> fails on a body value, and <code>update-user</code> is skipped because it needs <code>create-user</code>.
+Every variant keeps the log shape from <code>docs/design/runs.md</code>: a first line, one line per suite, the failures, a last line.
+The variants disagree on the <b>failure text</b> and on <b>where the full request and response live</b>.</p>
+
+<details class="note">
+<summary>The two suites in this mock (for the line numbers and the example body)</summary>
+<pre class="dim">
+<span class="hdr">surface/api/search.yaml</span>
+ 1  apiVersion: surface/v1
+ 2  kind: API
+ 3
+ 4  defaults:
+ 5    headers:
+ 6      Authorization: Bearer ${{ secrets.production.api_token }}
+ 7
+ 8  tests:
+ 9    - name: search-person
+10      method: POST
+11      path: /person/search
+12      json: {"professional_network_profile_urls": ["https://www.linkedin.com/in/&lt;example&gt;/"]}
+13      expect:
+14        status: 200
+15        match: types
+16        body: {"profiles": [{"name": "Ada Lovelace", "title": "Engineer"}]}
+17
+18    - name: no-token-is-rejected
+19      method: POST
+20      path: /person/search
+21      headers:
+22        Authorization: null
+23      expect:
+24        status: 401
+
+<span class="hdr">surface/api/users.yaml</span>
+ 1  apiVersion: surface/v1
+ 2  kind: API
+ 3
+ 4  defaults:
+ 5    headers:
+ 6      Authorization: Bearer ${{ secrets.production.api_token }}
+ 7
+ 8  tests:
+ 9    - name: create-user
+10      method: POST
+11      path: /users
+12      form:
+13        email: u-${{ run.id }}@example.com
+14        plan: free
+15      expect:
+16        status: 201
+17        body: {"data": {"plan": "free", "status": "active"}}
+18      save:
+19        user_id: body.data.id
+20
+21    - name: update-user
+22      needs: [create-user]
+23      method: PATCH
+24      path: /users/${{ needs.create-user.user_id }}
+25      json:
+26        note: "updated by ${{ run.id }}"
+27      expect:
+28        status: 200
+</pre>
+</details>
+
+<!-- ============================================================ A -->
+<section id="A" class="variant">
+<h2>Variant A: checks first, the exchange folded under them</h2>
+<div class="note"><b>What this variant decides</b>
+<ul>
+<li>The failure text is a list of checks, one per line, each line <code>&lt;path&gt;: expected X, got Y</code>. Short.</li>
+<li>Line one is a summary of the checks: it is the GitHub annotation.</li>
+<li>The full request and response are in the log, folded in a <code>::group::</code> block under each failure. GitHub renders it closed. The reader clicks to open it.</li>
+<li>A skipped test gets one line in the failures section, with the reason.</li>
+</ul></div>
+<div class="log">
+<pre><span class="hdr">surface 1.2.0 run 01j9z3k4m5n6p7q8r9s0t1u2v3 target https://pr-123.preview.crustdata.com</span>
+surface/api/search.yaml: 1 passed, 1 failed
+surface/api/users.yaml: 0 passed, 1 failed, 1 skipped
+
+<span class="hdr">surface/api/search.yaml no-token-is-rejected</span>
+  <span class="bad">status: expected 401, got 200</span>
+  POST /person/search, 200 in 84ms</pre>
+<details><summary>::group::request and response</summary><pre>&gt; POST https://pr-123.preview.crustdata.com/person/search
+&gt; User-Agent: surface/1.2.0
+&gt;
+&lt; 200 OK
+&lt; Content-Type: application/json
+&lt;
+&lt; {"profiles":[]}</pre></details>
+<pre>
+<span class="hdr">surface/api/users.yaml create-user</span>
+  <span class="bad">body: 2 differences from the example (match: values)</span>
+  <span class="bad">body.data.plan: expected "free", got "trial"</span>
+  <span class="bad">body.data.status: expected "active", key is missing</span>
+  POST /users, 201 in 212ms</pre>
+<details><summary>::group::request and response</summary><pre>&gt; POST https://pr-123.preview.crustdata.com/users
+&gt; Authorization: Bearer <span class="sec">${{ secrets.production.api_token }}</span>
+&gt; Content-Type: application/x-www-form-urlencoded
+&gt; User-Agent: surface/1.2.0
+&gt;
+&gt; email=u-01j9z3k4m5n6p7q8r9s0t1u2v3%40example.com&amp;plan=free
+&lt; 201 Created
+&lt; Content-Type: application/json
+&lt; Location: /users/8812
+&lt;
+&lt; {"data":{"id":8812,"email":"u-01j9z3k4m5n6p7q8r9s0t1u2v3@example.com","plan":"trial"}}</pre></details>
+<pre>
+<span class="hdr">surface/api/users.yaml update-user</span>
+  <span class="dim">skipped: needs create-user, which failed</span>
+
+<span class="hdr">run 01j9z3k4m5n6p7q8r9s0t1u2v3: 1 passed, 2 failed, 1 skipped</span></pre>
+</div>
+<div class="log ann"><pre class="dim">The two annotations the client writes (line one of each failure, with the test name in front):
+::error file=surface/api/search.yaml,line=18::no-token-is-rejected: status: expected 401, got 200
+::error file=surface/api/users.yaml,line=9::create-user: body: 2 differences from the example (match: values)</pre></div>
+</section>
+
+<!-- ============================================================ B -->
+<section id="B" class="variant">
+<h2>Variant B: a diff, like git</h2>
+<div class="note"><b>What this variant decides</b>
+<ul>
+<li>The failure text is a unified diff: <code>-</code> is what the suite expects, <code>+</code> is what the target sent. The body diff shows only the keys the example has. Extra keys in the response pass, so they do not appear.</li>
+<li>Line one is the first failed check. It is the GitHub annotation.</li>
+<li>The response is the <code>+</code> side, so it is already in the log. Only the request is folded in a <code>::group::</code>.</li>
+<li>A skipped test prints nothing of its own. It is counted on the suite line and the last line.</li>
+</ul></div>
+<div class="log">
+<pre><span class="hdr">surface 1.2.0 run 01j9z3k4m5n6p7q8r9s0t1u2v3 target https://pr-123.preview.crustdata.com</span>
+surface/api/search.yaml: 1 passed, 1 failed
+surface/api/users.yaml: 0 passed, 1 failed, 1 skipped (update-user needs create-user)
+
+<span class="hdr">surface/api/search.yaml no-token-is-rejected</span>
+  <span class="bad">status: expected 401, got 200</span>
+  --- expected
+  +++ actual (POST /person/search, 84ms)
+  <span class="del">-status 401</span>
+  <span class="add">+status 200</span></pre>
+<details><summary>::group::request</summary><pre>&gt; POST https://pr-123.preview.crustdata.com/person/search
+&gt; User-Agent: surface/1.2.0</pre></details>
+<pre>
+<span class="hdr">surface/api/users.yaml create-user</span>
+  <span class="bad">body.data.plan: expected "free", got "trial"</span>
+  --- expected (match: values)
+  +++ actual (POST /users, 201 in 212ms)
+   {
+     "data": {
+  <span class="del">-    "plan": "free",</span>
+  <span class="add">+    "plan": "trial",</span>
+  <span class="del">-    "status": "active"</span>
+     }
+   }</pre>
+<details><summary>::group::request</summary><pre>&gt; POST https://pr-123.preview.crustdata.com/users
+&gt; Authorization: Bearer <span class="sec">${{ secrets.production.api_token }}</span>
+&gt; Content-Type: application/x-www-form-urlencoded
+&gt; User-Agent: surface/1.2.0
+&gt;
+&gt; email=u-01j9z3k4m5n6p7q8r9s0t1u2v3%40example.com&amp;plan=free</pre></details>
+<pre>
+<span class="hdr">run 01j9z3k4m5n6p7q8r9s0t1u2v3: 1 passed, 2 failed, 1 skipped</span></pre>
+</div>
+<div class="log ann"><pre class="dim">The two annotations the client writes:
+::error file=surface/api/search.yaml,line=18::no-token-is-rejected: status: expected 401, got 200
+::error file=surface/api/users.yaml,line=9::create-user: body.data.plan: expected "free", got "trial"</pre></div>
+</section>
+
+<!-- ============================================================ C -->
+<section id="C" class="variant">
+<h2>Variant C: the response, with the checks beside it</h2>
+<div class="note"><b>What this variant decides</b>
+<ul>
+<li>The failure text is the request, then the response pretty-printed, with <span class="ok">✓</span> and <span class="bad">✗</span> marks on the lines the checks looked at. Nothing is folded. The log is longer, and the reader scrolls instead of clicking.</li>
+<li>Line one is a summary of the checks. It is the GitHub annotation.</li>
+<li>A big response body is cut after 4 KiB with a line that says so. The whole body stays in the run result at <code>GET /v1/runs/&lt;id&gt;</code>.</li>
+<li>A skipped test gets one line in the failures section, with the reason.</li>
+</ul></div>
+<div class="log">
+<pre><span class="hdr">surface 1.2.0 run 01j9z3k4m5n6p7q8r9s0t1u2v3 target https://pr-123.preview.crustdata.com</span>
+surface/api/search.yaml: 1 passed, 1 failed
+surface/api/users.yaml: 0 passed, 1 failed, 1 skipped
+
+<span class="hdr">surface/api/search.yaml no-token-is-rejected</span>
+  <span class="bad">status: expected 401, got 200</span>
+  &gt; POST https://pr-123.preview.crustdata.com/person/search
+  &gt; User-Agent: surface/1.2.0
+  &lt; 200 OK in 84ms                      <span class="bad">✗ expected 401</span>
+  &lt; Content-Type: application/json
+  &lt; {"profiles": []}
+
+<span class="hdr">surface/api/users.yaml create-user</span>
+  <span class="bad">body: 2 differences from the example (match: values)</span>
+  &gt; POST https://pr-123.preview.crustdata.com/users
+  &gt; Authorization: Bearer <span class="sec">${{ secrets.production.api_token }}</span>
+  &gt; Content-Type: application/x-www-form-urlencoded
+  &gt; User-Agent: surface/1.2.0
+  &gt; email=u-01j9z3k4m5n6p7q8r9s0t1u2v3%40example.com&amp;plan=free
+  &lt; 201 Created in 212ms                <span class="ok">✓</span>
+  &lt; Content-Type: application/json
+  &lt; Location: /users/8812
+  &lt; {
+  &lt;   "data": {
+  &lt;     "id": 8812,
+  &lt;     "email": "u-01j9z3k4m5n6p7q8r9s0t1u2v3@example.com",
+  &lt;     "plan": "trial",                 <span class="bad">✗ expected "free"</span>
+  &lt;                                      <span class="bad">✗ "status" is missing, expected "active"</span>
+  &lt;   }
+  &lt; }
+
+<span class="hdr">surface/api/users.yaml update-user</span>
+  <span class="dim">skipped: needs create-user, which failed</span>
+
+<span class="hdr">run 01j9z3k4m5n6p7q8r9s0t1u2v3: 1 passed, 2 failed, 1 skipped</span></pre>
+</div>
+<div class="log ann"><pre class="dim">The two annotations the client writes:
+::error file=surface/api/search.yaml,line=18::no-token-is-rejected: status: expected 401, got 200
+::error file=surface/api/users.yaml,line=9::create-user: body: 2 differences from the example (match: values)</pre></div>
+</section>
+
+<div id="bar">
+  <button id="prev" title="previous (←)">←</button>
+  <span id="label"></span>
+  <button id="next" title="next (→)">→</button>
+</div>
+
+<script>
+  const variants = { A: "checks first", B: "diff", C: "response with marks" };
+  const keys = Object.keys(variants);
+  function current() { const k = location.hash.replace("#", ""); return keys.includes(k) ? k : "A"; }
+  function show(k) { location.hash = k; document.getElementById("label").textContent = k + " (" + variants[k] + ")"; }
+  function step(d) { show(keys[(keys.indexOf(current()) + d + keys.length) % keys.length]); }
+  document.getElementById("prev").onclick = () => step(-1);
+  document.getElementById("next").onclick = () => step(1);
+  document.addEventListener("keydown", e => {
+    if (e.key === "ArrowLeft") step(-1);
+    if (e.key === "ArrowRight") step(1);
+  });
+  window.addEventListener("hashchange", () => show(current()));
+  show(current());
+</script>
+</body>
+</html>
