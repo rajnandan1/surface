@@ -20,6 +20,8 @@ type config struct {
 
 	resultsDir string
 	retention  string
+
+	groups map[string]group
 }
 
 func loadConfig(path string) (config, error) {
@@ -68,6 +70,10 @@ func loadConfig(path string) (config, error) {
 			}
 		case "results":
 			if err := c.loadResults(path, value); err != nil {
+				return c, err
+			}
+		case "groups":
+			if err := c.loadGroups(path, value); err != nil {
 				return c, err
 			}
 		default:
@@ -206,4 +212,98 @@ func (c *config) loadResults(path string, node *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+func (c *config) loadGroups(path string, node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: line %d: groups must be a mapping", path, node.Line)
+	}
+	c.groups = map[string]group{}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		if !slug.MatchString(key.Value) {
+			return fmt.Errorf("%s: line %d: group name %q is not a slug of [a-z0-9-]", path, key.Line, key.Value)
+		}
+		g, err := parseGroup(key, value)
+		if err != nil {
+			return fmt.Errorf("%s: %v", path, err)
+		}
+		c.groups[key.Value] = g
+	}
+	return nil
+}
+
+func parseGroup(name, node *yaml.Node) (group, error) {
+	g := group{secret: name.Value}
+	if node.Kind != yaml.MappingNode {
+		return g, fmt.Errorf("line %d: groups.%s must be a mapping", node.Line, name.Value)
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "secret":
+			if value.ShortTag() != "!!str" || value.Value == "" {
+				return g, fmt.Errorf("line %d: groups.%s.secret must be a Kubernetes Secret name", value.Line, name.Value)
+			}
+			g.secret = value.Value
+		case "callers":
+			if value.Kind != yaml.SequenceNode {
+				return g, fmt.Errorf("line %d: groups.%s.callers must be a list", value.Line, name.Value)
+			}
+			for _, entry := range value.Content {
+				parsed, err := parseCaller(entry)
+				if err != nil {
+					return g, err
+				}
+				g.callers = append(g.callers, parsed)
+			}
+		case "targets":
+			if value.Kind != yaml.SequenceNode {
+				return g, fmt.Errorf("line %d: groups.%s.targets must be a list", value.Line, name.Value)
+			}
+			for _, entry := range value.Content {
+				if entry.ShortTag() != "!!str" {
+					return g, fmt.Errorf("line %d: a group target must be a string", entry.Line)
+				}
+				parsed, err := parseTarget(entry.Value)
+				if err != nil {
+					return g, fmt.Errorf("line %d: %v", entry.Line, err)
+				}
+				g.targets = append(g.targets, parsed)
+			}
+		default:
+			return g, fmt.Errorf("line %d: unknown key %q", key.Line, "groups."+name.Value+"."+key.Value)
+		}
+	}
+	if len(g.callers) == 0 {
+		return g, fmt.Errorf("line %d: groups.%s.callers is missing or empty", name.Line, name.Value)
+	}
+	if len(g.targets) == 0 {
+		return g, fmt.Errorf("line %d: groups.%s.targets is missing or empty", name.Line, name.Value)
+	}
+	return g, nil
+}
+
+func parseCaller(entry *yaml.Node) (caller, error) {
+	var c caller
+	if entry.Kind == yaml.MappingNode {
+		for i := 0; i < len(entry.Content); i += 2 {
+			key, value := entry.Content[i], entry.Content[i+1]
+			switch key.Value {
+			case "repo":
+				c.Repo = value.Value
+			case "ref":
+				c.Ref = value.Value
+			default:
+				return c, fmt.Errorf("line %d: unknown key %q", key.Line, key.Value)
+			}
+			if value.ShortTag() != "!!str" {
+				return c, fmt.Errorf("line %d: a caller's %s must be a string", value.Line, key.Value)
+			}
+		}
+	}
+	if c.Repo == "" || c.Ref == "" {
+		return c, fmt.Errorf("line %d: a caller must be a mapping with repo and ref", entry.Line)
+	}
+	return c, nil
 }

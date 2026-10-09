@@ -38,6 +38,8 @@ type runResult struct {
 	stopState, stopReason string
 	cleanupDeadline       time.Time
 	rate                  *rateLimit
+	secrets               map[string]string
+	redact                *strings.Replacer
 }
 
 type suiteResult struct {
@@ -283,11 +285,30 @@ func (r *runner) shutdown() {
 
 func (r *runner) execute(run *runResult, texts map[string]string) {
 	defer r.active.Done()
+	suites := make([]suite, len(run.Suites))
+	run.secrets = map[string]string{}
+	read := map[string]error{}
+	for i, result := range run.Suites {
+		s, err := loadSuite(result.Path, texts[result.Path])
+		if err == nil {
+			err = r.readGroups(run, result.Path, s, read)
+		}
+		if err != nil {
+			r.mu.Lock()
+			result.State, result.Failure = "failed", err.Error()
+			r.mu.Unlock()
+		}
+		suites[i] = s
+	}
+	run.redact = newRedactor(run.secrets)
 	var wg sync.WaitGroup
-	for _, suite := range run.Suites {
-		wg.Go(func() { r.runSuite(run, suite, texts[suite.Path]) })
+	for i, result := range run.Suites {
+		if result.State == "pending" {
+			wg.Go(func() { r.runSuite(run, result, suites[i]) })
+		}
 	}
 	wg.Wait()
+	run.secrets, run.redact = nil, nil
 
 	r.mu.Lock()
 	run.State = "passed"
@@ -311,15 +332,9 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 
 var skipReason = map[string]string{"failed": "failed", "skipped": "was skipped"}
 
-func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
+func (r *runner) runSuite(run *runResult, result *suiteResult, s suite) {
 	defer r.save(run)
-	s, err := loadSuite(result.Path, text)
 	r.mu.Lock()
-	if err != nil {
-		result.State, result.Failure = "failed", err.Error()
-		r.mu.Unlock()
-		return
-	}
 	result.State = "running"
 	for _, t := range s.Tests {
 		result.Tests = append(result.Tests, &testResult{Name: t.Name, State: "pending"})
@@ -333,9 +348,13 @@ func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
 	for i, t := range s.Tests {
 		index[t.Name], ended[i] = i, make(chan struct{})
 	}
-	runIDJSON, _ := json.Marshal(run.ID)
+	known := map[string]json.RawMessage{}
+	known["run.id"], _ = json.Marshal(run.ID)
+	for name, value := range run.secrets {
+		known[name], _ = json.Marshal(value)
+	}
 	vars := func(names ...string) map[string]json.RawMessage {
-		vars := map[string]json.RawMessage{"run.id": runIDJSON}
+		vars := maps.Clone(known)
 		for _, name := range names {
 			for key, value := range saved[index[name]] {
 				vars["needs."+name+"."+key] = value
@@ -398,7 +417,7 @@ func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
 			release()
 		}
 		if cleanup.Failure != "" {
-			cleanup.State = "failed"
+			cleanup.State, cleanup.Failure = "failed", run.redact.Replace(cleanup.Failure)
 		}
 		r.mu.Lock()
 		entries[i].Cleanup = cleanup
@@ -431,7 +450,7 @@ func (r *runner) runTest(run *runResult, d defaults, t test, vars map[string]jso
 	}
 
 	r.mu.Lock()
-	result.State, result.Failure = "passed", failure
+	result.State, result.Failure = "passed", run.redact.Replace(failure)
 	if failure != "" {
 		result.State = "failed"
 	}
