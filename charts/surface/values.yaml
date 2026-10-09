@@ -1,0 +1,30 @@
+# The runner config, copied as is into config.yaml. See docs/design/install.md.
+config: {}
+
+# GOMEMLIMIT is 90% of limits.memory. Raise the limit when you raise config.limits.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 4Gi
+
+# The host of the Ingress and the HTTPRoute is the host of config.url.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls:
+    secretName: ""
+
+httpRoute:
+  enabled: false
+  parentRefs: []
+
+# The volume for the run result files, mounted at config.results.dir.
+# An empty storageClass uses the cluster's default StorageClass.
+# With enabled: false, the chart mounts an emptyDir, and no run result survives a restart.
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
