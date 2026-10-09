@@ -66,7 +66,7 @@ The same rules apply to the target list and to a group's `targets` in [secrets.m
 ## The target list
 
 - The runner's config has a top-level `targets:` list. It is required and must not be empty. The runner refuses to start otherwise.
-- Each entry is one target string, or a mapping with `url`, the target string, and `rate`, the per-target rate limit ([limits.md](limits.md)). An entry has no callers. The secret group binding limits which callers may use which secrets, and the target's own authentication limits what a run without secrets can change.
+- Each entry is one target string, or a mapping with `url`, the target string, and `rate`, the per-target rate limit ([limits.md](limits.md)). An entry has no callers. The owner list decides which repos may start a run ([runs.md](runs.md)). The secret group binding decides which callers may use which secrets. The target's own authentication limits what a run without secrets can change.
 - When a run starts, before any suite loads and before any request, the runner checks the run's target against the target list. If it does not match, the whole run fails, and no suite runs.
 - The secret group binding is a second, separate check. A suite that references a group whose `targets` do not match the run's target fails at load ([secrets.md](secrets.md)). The runner does not check a group's `targets` against the target list at startup. Both checks run per run.
 - Why the list is deny by default: a suite is untrusted input ([ADR 0001](../adr/0001-suites-are-untrusted-input.md)) and the runner runs inside the cluster. Without the list, a run that uses no secrets could call the cloud metadata address `169.254.169.254`, the Kubernetes API, or any in-cluster service.

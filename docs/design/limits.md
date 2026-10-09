@@ -107,7 +107,7 @@ The runner refuses to start when `limits.requests` or `limits.runs` is not a who
 
 - With both defaults at 30m, the client's wait limit usually passes a few seconds before the run time limit, because the client starts its clock before it sends the run request. The CI log then shows `did not finish within 30m`, and the run result holds `run time limit of 30m passed`.
 - A large run delays the other runs by the time the pool needs to send its requests, because there is no cap per run.
-- The runner does not limit who starts a run or how many runs one caller starts. That is decided in [Which callers may start a run?](https://github.com/rajnandan1/surface/issues/14).
+- Only the repos of the owners on `github.owner_ids` may start a run ([runs.md](runs.md)). There is no cap on runs per repo, so one repo can hold every run slot.
 
 ## Decided elsewhere
 
@@ -117,4 +117,4 @@ The runner refuses to start when `limits.requests` or `limits.runs` is not a who
 - The target list and how a target matches an entry: [targets.md](targets.md)
 - Cleanups and their order: [data-safety.md](data-safety.md)
 - The pod's memory limit and the grace period: [How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13)
-- Which callers may start a run: [Which callers may start a run?](https://github.com/rajnandan1/surface/issues/14)
+- Which owners may use the runner: [runs.md](runs.md)

@@ -1,6 +1,6 @@
 # Runs
 
-A run is one execution of a set of suites, started by one CI job. A run request is the message the CI job sends to start it, and the client is the `surface` command that runs inside the CI job, sends the run request, and waits for the result (see [GLOSSARY.md](../../GLOSSARY.md)). This doc defines how the CI job starts a run, how the runner learns who the caller is, how the client waits, what the CI log shows, and the shape of the GitHub Action. The decisions come from [How does a CI job start a run and get the result?](https://github.com/rajnandan1/surface/issues/8) and [ADR 0007](../adr/0007-ci-job-sends-the-suites-and-proves-its-caller-with-a-github-oidc-token.md).
+A run is one execution of a set of suites, started by one CI job. A run request is the message the CI job sends to start it, and the client is the `surface` command that runs inside the CI job, sends the run request, and waits for the result (see [GLOSSARY.md](../../GLOSSARY.md)). This doc defines how the CI job starts a run, how the runner learns who the caller is, which owners may use the runner, how the client waits, what the CI log shows, and the shape of the GitHub Action. The decisions come from [How does a CI job start a run and get the result?](https://github.com/rajnandan1/surface/issues/8), [Which callers may start a run?](https://github.com/rajnandan1/surface/issues/14), [ADR 0007](../adr/0007-ci-job-sends-the-suites-and-proves-its-caller-with-a-github-oidc-token.md), and [ADR 0011](../adr/0011-only-listed-github-owners-may-use-the-runner-matched-by-owner-id.md).
 
 ## Example
 
@@ -26,6 +26,8 @@ The operator side, in the runner's config:
 url: https://surface.internal.example.com   # Required. The runner's own URL, the audience it accepts.
 github:
   issuer: https://token.actions.githubusercontent.com   # Optional. This is the default. GitHub Enterprise Server uses https://HOSTNAME/_services/token.
+  owner_ids:            # Required. The owners whose repos may use this runner. See "Who may use the runner".
+    - 63745551          # crustdata
 ```
 
 The CI log, on a failed run:
@@ -60,7 +62,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: 6 passed, 1 failed
 
 1. The client collects the suite files and asks GitHub for an OIDC token with the runner URL as audience.
 2. The client sends the run request, `POST <runner>/v1/runs`, with the token in `Authorization: Bearer`.
-3. The runner checks the token, reads the caller from it, checks the target against the target list, and answers `202 Accepted` with the run id. The run starts.
+3. The runner checks the token and the token's owner, reads the caller from the token, checks the target against the target list, and answers `202 Accepted` with the run id. The run starts.
 4. The client polls `GET <runner>/v1/runs/<id>` every 5 seconds until the run's `state` is final or the wait limit passes.
 5. The client prints the result, writes the job summary and the annotations, and exits with `0`, `1`, or `2`.
 
@@ -78,22 +80,37 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: 6 passed, 1 failed
 - The audience is the runner's URL. The client sends the `runner` input with one trailing `/` removed. The operator sets the same text as `url` in the runner config. `url` is required, and the runner refuses to start without it. The two must be equal byte for byte.
 - The runner checks the token's signature against the issuer's published keys, the issuer, the audience, and the expiry, with 60 seconds of clock skew. It fetches the keys from `<issuer>/.well-known/openid-configuration` and caches them. GitHub does not document the token lifetime, so the runner trusts `exp` alone.
 - The caller is the `repository` claim as `repo` and the `ref` claim as `ref`. For a push, `ref` is `refs/heads/<branch>` or `refs/tags/<tag>`. For a pull request, it is `refs/pull/<number>/merge`. The runner matches the caller against each secret group's `callers` ([secrets.md](secrets.md)). The runner also records `sha`, `run_id`, and `workflow_ref` with the run, so a result can point back at `https://github.com/<repository>/actions/runs/<run_id>`.
-- v1 trusts GitHub only. The runner config has one `github:` block with an optional `issuer`. Another CI vendor later is another block with its own issuer and claim names, with no change to the run request.
+- v1 trusts GitHub only. The runner config has one `github:` block with an optional `issuer` and the required `owner_ids`. Another CI vendor later is another block with its own issuer, claim names, and allow list, with no change to the run request.
 - A pull request from a fork cannot start a run. GitHub turns every write permission of a fork's pull request to read-only unless the repo setting "Send write tokens to workflows from pull requests" is on, and `id-token` has only the levels `write` and `none`, so the job gets no token. Surface does not recommend `pull_request_target` as a way around it, because that event runs the base branch's workflow with the base repo's permissions on a fork's code.
 - The runner verifies tokens with `github.com/coreos/go-oidc/v3` at v3.21.0. On 2026-10-08 it passed the library rule of [ADR 0002](../adr/0002-own-suite-format-and-engine.md).
+
+## Who may use the runner
+
+- An owner is the GitHub org or user account that holds a repo ([GLOSSARY.md](../../GLOSSARY.md)). The runner config's `github.owner_ids` lists the owners whose repos may use the runner. Each entry is the owner's ID: the number GitHub gives the account.
+- `owner_ids` is required and must not be empty. The runner refuses to start without it, or when an entry is not a whole number of 1 or more.
+- The token carries the owner's ID in the `repository_owner_id` claim, as decimal text, for example `"63745551"`. The runner compares that text with the entries, written as decimal text.
+- The runner checks the owner on every route but `GET /healthz`. The check runs right after the token check and before the runner reads the request body. So a stranger's repo cannot make the runner read 16 MiB, hold a run slot, or write a run result file.
+- A token whose owner is not on the list gets `403` with one line, for example `run: repo "someone/api" (owner id 98765) may not use this runner`. The runner writes no log line for a refusal, because a stranger could fill the log with requests. An operator whose own repo is refused reads the line in the CI log and copies the number.
+- The operator finds an ID with `gh api orgs/<name> --jq .id` for an org, or `gh api users/<name> --jq .id` for a user account.
+- Why IDs and not names: when an org or a user is renamed, GitHub frees the old name at once. When an org is deleted, its name is free after 90 days. A stranger who registers the name and creates a repo with the same name gets a token whose `repository` claim matches the old one. The ID never changes on a rename. GitHub changed its own default `sub` claim to carry the IDs for the same reason ([changelog, 2026-04-23](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/)).
+- Why no list per repo: a repo of a listed owner is the operator's own. The secret group binding still decides which repos and refs may use which secrets ([secrets.md](secrets.md)).
+- The secret group `callers` and the rule in "Who may read or cancel a run" stay on names. A stranger who registers a recycled name never reaches them, because the owner check runs first.
+- There is no cap on runs per repo. One repo can hold every run slot ([limits.md](limits.md)). The operator fixes such a repo, because it is the operator's own. A measured case of one repo starving the others is the trigger to add a cap.
+- A scheduled run, later, has no token. The operator defines it in the runner config, so the owner list does not apply to it. Another CI vendor, later, gets its own block with its own allow list.
+- The decision is recorded in [ADR 0011](../adr/0011-only-listed-github-owners-may-use-the-runner-matched-by-owner-id.md).
 
 ## Waiting
 
 - The runner answers the run request with `202 Accepted` and `{"id": "<run id>"}` as soon as the run is accepted. It holds no request open.
 - The client polls `GET /v1/runs/<id>` every 5 seconds.
-- On `401`, the client fetches a fresh token once and retries. On a `5xx` or a network error, it retries at the next poll. On `404`, it exits `2`: the run is unknown or no longer stored.
+- On `401`, the client fetches a fresh token once and retries. On `403`, it exits `2` with the runner's line. On a `5xx` or a network error, it retries at the next poll. On `404`, it exits `2`: the run is unknown or no longer stored.
 - On a `503` to the run request, the client sends the run request again every 5 seconds until the wait limit passes, because a `503` means the runner made no run ([runner.md](runner.md)). On a network error to the run request, it exits `2`, because the runner may have made the run.
 - The wait limit is 30 minutes by default. The `timeout` input sets it. When it passes, the client exits `2` with `surface run: run <id> did not finish within 30m`. The run itself keeps running on the runner, bounded by the run time limit, 30m by default ([limits.md](limits.md)).
 - Why poll and not hold: ingresses and load balancers close an idle connection after about 60 seconds by default. A held request needs a timeout tuned on every install, and a dropped connection loses the result.
 
-## Who may read a run
+## Who may read or cancel a run
 
-- `GET /v1/runs/<id>` needs a valid token whose `repository` claim equals the run's caller `repo`. Any ref of the same repo may read it, because anyone with write access to the repo can already read its secrets.
+- `GET /v1/runs/<id>` and `POST /v1/runs/<id>/cancel` need a valid token from a listed owner, and the token's `repository` claim must equal the run's caller `repo`. Any ref of the same repo may read or cancel the run, because anyone with write access to the repo can already read its secrets.
 - The runner issues no run token and keeps no extra state. A run result holds response bodies from the target, so an unguessable id alone is not the protection, because ids land in logs.
 
 ## Cancel
@@ -190,6 +207,7 @@ The client also writes:
 A run request fails, with one line and no run id, when:
 
 - the token is missing, expired, has the wrong audience or issuer, or has a bad signature: `401`,
+- the token's `repository_owner_id` is not in `github.owner_ids`: `403`,
 - the body is over 16 MiB: `413`,
 - the body is not the shape above, or `target` is missing or malformed: `400` ([targets.md](targets.md)),
 - the target is not in the target list: `403`,
@@ -197,6 +215,7 @@ A run request fails, with one line and no run id, when:
 
 ```
 run: token audience "https://other.example.com" is not this runner
+run: repo "someone/api" (owner id 98765) may not use this runner
 run: target is missing
 run: target "http://10.0.0.5:8080" is not in the target list
 ```
@@ -205,6 +224,8 @@ A suite that fails at load does not reject the run. The run starts, that suite i
 
 ## Known limits
 
+- One repo can hold every run slot, because there is no cap on runs per repo.
+- The secret group `callers` and the rule for who may read or cancel a run match names. When one listed owner renames itself, another listed owner can take the old name and match them. The operator trusts every listed owner.
 - A fork's pull request cannot start a run. A product that takes outside contributions runs surface on `main` after the merge, or on a branch a maintainer pushes.
 - A run keeps running, cleanups included, when the client stops polling without a cancel, for example when the job is killed. The run time limit bounds it ([limits.md](limits.md)).
 - The client trusts the `runner` URL it is given. A workflow that points at a wrong URL sends that URL a token with that URL as audience, and nothing else. The token names no secret and grants nothing at GitHub.

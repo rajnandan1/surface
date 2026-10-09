@@ -72,6 +72,10 @@ _Avoid_: Credential, env var, variable
 The source of a run: a repo and a git ref (a branch, a tag, or a pull request's merge ref), or later a schedule.
 _Avoid_: Identity, principal, source
 
+**Owner**:
+The GitHub organization or user account that holds a repo. Only callers whose owner is on the runner's list may use the runner.
+_Avoid_: Org, organization, account, namespace
+
 **Operator**:
 The person or team that installs surface in their own cluster and decides which callers may use which secret groups.
 _Avoid_: Admin, platform team, SRE
