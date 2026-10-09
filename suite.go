@@ -18,6 +18,8 @@ type suite struct {
 	Kind       yaml.Node `yaml:"kind"`
 	Defaults   defaults  `yaml:"defaults"`
 	Tests      []test    `yaml:"tests"`
+
+	secrets []string
 }
 
 type defaults struct {
@@ -155,23 +157,33 @@ func loadSuite(path, text string) (suite, error) {
 	if cycle := findCycle(s.Tests); cycle != nil {
 		return fail("needs has a cycle: %s", strings.Join(cycle, " needs "))
 	}
-	if err := checkVariables(&root, s.Tests); err != nil {
+	secrets, err := checkVariables(&root, s.Tests)
+	if err != nil {
 		return fail("%v", err)
 	}
+	s.secrets = secrets
 	return s, nil
 }
 
-func checkVariables(root *yaml.Node, tests []test) error {
+func checkVariables(root *yaml.Node, tests []test) (secrets []string, err error) {
 	saved := map[string]savedValues{}
 	for _, t := range tests {
 		saved[t.Name] = t.Save
+	}
+	check := func(readable []string) func(name string) error {
+		return func(name string) error {
+			if strings.HasPrefix(name, "secrets.") && !slices.Contains(secrets, name) {
+				secrets = append(secrets, name)
+			}
+			return checkVariable(name, readable, saved)
+		}
 	}
 	doc := root.Content[0]
 	for i := 0; i < len(doc.Content); i += 2 {
 		switch value := doc.Content[i+1]; doc.Content[i].Value {
 		case "defaults":
-			if err := walkVariables(value, nil, saved); err != nil {
-				return err
+			if err := walkVariables(value, check(nil)); err != nil {
+				return nil, err
 			}
 		case "tests":
 			for j, item := range value.Content {
@@ -181,17 +193,18 @@ func checkVariables(root *yaml.Node, tests []test) error {
 					if item.Content[k].Value == "cleanup" {
 						readable = append(slices.Clone(t.Needs), t.Name)
 					}
-					if err := walkVariables(item.Content[k+1], readable, saved); err != nil {
-						return err
+					if err := walkVariables(item.Content[k+1], check(readable)); err != nil {
+						return nil, err
 					}
 				}
 			}
 		}
 	}
-	return nil
+	slices.Sort(secrets)
+	return secrets, nil
 }
 
-func walkVariables(n *yaml.Node, readable []string, saved map[string]savedValues) error {
+func walkVariables(n *yaml.Node, check func(name string) error) error {
 	switch n.Kind {
 	case yaml.ScalarNode:
 		for rest := n.Value; ; {
@@ -203,20 +216,20 @@ func walkVariables(n *yaml.Node, readable []string, saved map[string]savedValues
 			if !closed {
 				return fmt.Errorf("line %d: ${{ has no closing }}", n.Line)
 			}
-			if err := checkVariable(strings.TrimSpace(name), readable, saved); err != nil {
+			if err := check(strings.TrimSpace(name)); err != nil {
 				return fmt.Errorf("line %d: %v", n.Line, err)
 			}
 			rest = after
 		}
 	case yaml.MappingNode:
 		for i := 1; i < len(n.Content); i += 2 {
-			if err := walkVariables(n.Content[i], readable, saved); err != nil {
+			if err := walkVariables(n.Content[i], check); err != nil {
 				return err
 			}
 		}
 	case yaml.SequenceNode:
 		for _, item := range n.Content {
-			if err := walkVariables(item, readable, saved); err != nil {
+			if err := walkVariables(item, check); err != nil {
 				return err
 			}
 		}

@@ -71,8 +71,9 @@ stringData:
 ## Redaction
 
 - The runner replaces every occurrence of every secret value in everything it writes (its logs, the failure report, and the CI output) with the reference text, for example `${{ secrets.production.api_token }}`.
-- It also replaces the URL-escaped form of each value, because the runner URL-escapes values in `path`, `query`, and `form`.
-- It replaces longer values first, so a value that is a prefix of another value does not break the replacement.
+- It replaces every value of every group the run reads, not only the keys its suites reference.
+- It also replaces the URL-escaped forms and the JSON-escaped form of each value, because the runner URL-escapes values in `path`, `query`, and `form`, and JSON-escapes them in `json`.
+- It replaces longer values first, so a value that is a prefix of another value does not break the replacement. It replaces in one pass and does not read its own output, so a reference text that holds a shorter value stays whole.
 - Redaction runs on the output, not on the input. So a target that echoes a token back in a response body is also redacted.
 - Known limits: a value of one or two characters redacts more text than needed. An encoded form that the runner did not make, for example base64, is not caught. A suite cannot encode, so a Basic auth value is stored already encoded, and the exact match catches it.
 
@@ -82,14 +83,21 @@ A suite fails at load, before any request, when:
 
 - the group is not in the config,
 - the Kubernetes Secret does not have the key, or the value is empty,
-- the caller is not bound to the group, or
-- the target is not bound to the group.
+- the caller is not bound to the group,
+- the target is not bound to the group, or
+- the runner cannot read the Kubernetes Secret.
+
+The runner checks the config, the caller, and the target before it reads the Kubernetes Secret, so it never reads a group that the run may not use.
 
 The failure is one line that names the suite, the group, and the key or the reason:
 
 ```
-suite api/users.yaml: secret group "production" is not available to crustdata/web on refs/heads/feature-x
+suite api/users.yaml: secret group "staging" is not in the runner config
 suite api/users.yaml: secret group "production" has no key "api_token"
+suite api/users.yaml: secret group "production" key "api_token" is empty
+suite api/users.yaml: secret group "production" is not available to crustdata/web on refs/heads/feature-x
+suite api/users.yaml: secret group "production" is not available to target https://api.partner.example.com
+suite api/users.yaml: secret group "production" was not read: secrets "production" not found
 ```
 
 The other suites in the run still run. The report counts the failed suite as failed.
