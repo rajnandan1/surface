@@ -88,7 +88,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: 6 passed, 1 failed
 - The client polls `GET /v1/runs/<id>` every 5 seconds.
 - On `401`, the client fetches a fresh token once and retries. On a `5xx` or a network error, it retries at the next poll. On `404`, it exits `2`: the run is unknown or no longer stored.
 - On a `503` to the run request, the client sends the run request again every 5 seconds until the wait limit passes, because a `503` means the runner made no run ([runner.md](runner.md)). On a network error to the run request, it exits `2`, because the runner may have made the run.
-- The wait limit is 30 minutes by default. The `timeout` input sets it. When it passes, the client exits `2` with `surface run: run <id> did not finish within 30m`. The run itself keeps running on the runner, bounded by the run time limit ([What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)).
+- The wait limit is 30 minutes by default. The `timeout` input sets it. When it passes, the client exits `2` with `surface run: run <id> did not finish within 30m`. The run itself keeps running on the runner, bounded by the run time limit, 30m by default ([limits.md](limits.md)).
 - Why poll and not hold: ingresses and load balancers close an idle connection after about 60 seconds by default. A held request needs a timeout tuned on every install, and a dropped connection loses the result.
 
 ## Who may read a run
@@ -206,5 +206,5 @@ A suite that fails at load does not reject the run. The run starts, that suite i
 ## Known limits
 
 - A fork's pull request cannot start a run. A product that takes outside contributions runs surface on `main` after the merge, or on a branch a maintainer pushes.
-- A run keeps running, cleanups included, when the client stops polling without a cancel, for example when the job is killed. The run time limit bounds it ([What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)).
+- A run keeps running, cleanups included, when the client stops polling without a cancel, for example when the job is killed. The run time limit bounds it ([limits.md](limits.md)).
 - The client trusts the `runner` URL it is given. A workflow that points at a wrong URL sends that URL a token with that URL as audience, and nothing else. The token names no secret and grants nothing at GitHub.

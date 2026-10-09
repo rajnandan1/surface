@@ -122,14 +122,14 @@ The suite is `failed`, and the CI job exits `1`.
 ## Cancel
 
 - On `POST /v1/runs/<id>/cancel`, the runner starts no new test, lets in-flight requests finish or time out, runs the cleanups of the tests whose status check passed, in the order above, and then sets the run's `state` to `cancelled` ([runs.md](runs.md)).
-- The cancel adds at most one cleanup request, bounded by its timeout, per test that created data. The run's own time limit (decided in [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)) bounds the whole.
+- The cancel adds at most one cleanup request, bounded by its timeout, per test that created data. Cleanups may start up to 10 minutes after the run time limit. A cleanup that has not started by then is a failed cleanup with the failure text `not sent: run time limit passed` ([limits.md](limits.md)).
 - When the client stops polling without a cancel, for example when the job is killed, the run keeps running, cleanups included.
 - When the runner stops on SIGTERM, for example at a deploy, it cancels the runs in flight the same way, so the cleanups run, and the run's `state` becomes `error` with the reason `runner stopped` ([runner.md](runner.md)).
 - Known limit: when the runner crashes, the cleanups do not run. The runner marks the run `error` at its next start, and the data that is left carries the run id.
 
 ## A failed cleanup
 
-- A cleanup fails when any of its checks fails or when it gets no response, with the same rules as a test.
+- A cleanup fails when any of its checks fails or when it gets no response, with the same rules as a test. It also fails when it has not started 10 minutes after the run time limit, with the one-line failure text `not sent: run time limit passed` ([limits.md](limits.md)).
 - A failed cleanup makes the suite `failed` and the run `failed`, so the CI job exits `1`. The test's own `state` does not change: a test can be `passed` with a failed cleanup.
 - In `GET /v1/runs/<id>`, the test entry gets a `cleanup` object, present only when the cleanup ran: `{"state": "passed"}` or `{"state": "failed", "failure": "<text>"}` ([runs.md](runs.md)).
 - The failure text has the same format as a test's: line one, the request as sent, the response with the marks ([failure-text.md](failure-text.md)). Secret values in it are redacted ([secrets.md](secrets.md)).
@@ -155,5 +155,5 @@ The suite is `failed`, and the CI job exits `1`.
 - The cancel flow, the run and suite states, the wire shapes, the counts, the job summary, and the annotations: [runs.md](runs.md)
 - Redaction: [secrets.md](secrets.md)
 - What a runner restart does to a run in flight: [runner.md](runner.md)
-- The run's time limit and the request limits: [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)
+- The run time limit and the request limits: [limits.md](limits.md)
 - Whether a failed test runs again, and whether its cleanup runs between tries: the map's "Not yet specified"

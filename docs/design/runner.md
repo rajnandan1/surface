@@ -62,9 +62,9 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: error: runner stopped
 ## Load
 
 - The runner has no run queue. Every accepted run starts at once, and its `state` is `running`. The state `queued` exists in the run states and stays unused in v1 ([runs.md](runs.md)).
-- The tests and cleanups of all runs share one pool of N requests in flight per runner: one semaphore. A request waits for a slot in the order it asked, so the runs share the pool fairly. Under load every run gets slower, and none waits in a queue. The trade-off: a run can hit its run time limit because the pool is full.
+- The tests and cleanups of all runs share one pool of N requests in flight per runner: one semaphore. A request waits for a slot in the order it asked. Under load every run gets slower, and none waits in a queue. There is no cap per run, so a large run delays the others by the time the pool needs to send its requests ([limits.md](limits.md)). The trade-off: a run can hit its run time limit because the pool is full.
 - The runner caps the runs it holds in memory. Above the cap, `POST /v1/runs` answers `503` with `Retry-After: 5` and makes no run. The client retries the run request every 5 seconds until its wait limit passes ([runs.md](runs.md)).
-- N, the per-run cap on requests in flight, the cap on runs in memory, and the per-target rate limit are decided in [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12).
+- N is `limits.requests`, 128 by default. The cap on runs in memory is `limits.runs`, 32 by default. Both are in [limits.md](limits.md), with the per-target rate limit.
 
 ## Retention
 
@@ -86,5 +86,5 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: error: runner stopped
 - The run states, the wire shapes, the client, and the CI log: [runs.md](runs.md)
 - Cleanups on cancel: [data-safety.md](data-safety.md)
 - The namespace, the ServiceAccount, and the Secrets RBAC: [secrets.md](secrets.md)
-- N, the caps, the timeouts, the run time limit, and the per-target rate limit: [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)
+- N, the caps, the timeouts, the run time limit, and the per-target rate limit: [limits.md](limits.md)
 - The chart, the volume size, the grace period, the Ingress, and the release: [How does an organization install surface?](https://github.com/rajnandan1/surface/issues/13)

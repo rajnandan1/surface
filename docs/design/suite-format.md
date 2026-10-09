@@ -116,7 +116,7 @@ tests:
 | `json` | No | A body that the runner sends as JSON. The runner sets `Content-Type: application/json` if the test does not set it. |
 | `form` | No | A form-encoded body, with the same value rules as `query`. The runner sets `Content-Type: application/x-www-form-urlencoded` if the test does not set it. |
 | `body` | No | A raw text body. |
-| `timeout` | No | A Go duration, for example `500ms` or `10s`. It covers connect, send, wait, and read. It overrides `defaults.timeout`. The runner default is 30s. |
+| `timeout` | No | A Go duration, for example `500ms` or `10s`. It covers connect, send, wait, and read. It overrides `defaults.timeout`. The runner default is 30s. The maximum is 5m ([limits.md](limits.md)). |
 | `needs` | No | A list of test names that this test waits for. |
 | `save` | No | A map from a saved value's name to a path. |
 | `cleanup` | No | One request, with its own `expect`, that removes the data this test created. It runs after every test in the suite has ended. The rules are in [data-safety.md](data-safety.md). |
@@ -174,4 +174,4 @@ The runner parses suites with `go.yaml.in/yaml/v3` at v3.0.5, the maintained for
 - How a run starts, who the caller is, and how the result comes back: [runs.md](runs.md)
 - What a failed test prints: [failure-text.md](failure-text.md)
 - Skipped tests, cleanup, and collisions between runs: [data-safety.md](data-safety.md)
-- The maximum `timeout`: [What limits does the runner put on a run?](https://github.com/rajnandan1/surface/issues/12)
+- The maximum `timeout`: [limits.md](limits.md)

@@ -99,6 +99,7 @@ body.data.plan: expected a string, got a number
 body.data.status: expected "active", key is missing
 body.items: expected 3 items, got 2
 body: not JSON
+body: response is over 10 MiB
 save user_id: body.data.id finds nothing
 no response: timeout after 10s
 no response: connection refused
@@ -108,6 +109,7 @@ no response: connection refused
 - A type is `a string`, `a number`, `a bool`, `null`, `an object`, or `an array`.
 - A value prints as compact JSON: `"free"`, `8812`, `null`, `{"a":1}`. A value longer than 80 characters is cut with `…`.
 - `body: not JSON` is one check that stands for every body check, when a test has `expect.body`, `expect.equal`, or `save` and the body does not parse as JSON.
+- `body: response is over 10 MiB` is one check that stands for every body check, when the runner stopped reading the body at 10 MiB ([limits.md](limits.md)). It marks the first body line: `✗ over 10 MiB`.
 - `no response: <reason>` is the one check when the runner got no response. The reason is `timeout after <the test's timeout>` or the Go error text, for example `connection refused`. The lines below hold the request only.
 
 ## The request
