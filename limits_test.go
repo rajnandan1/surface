@@ -34,10 +34,14 @@ func suiteOf(n int) string {
 func boundedRunner(t *testing.T, issuer *fakeIssuer, url string, c config) *runner {
 	t.Helper()
 	c.url, c.issuer, c.ownerIDs = url, issuer.url, []string{crustdataOwnerID}
+	if c.resultsDir == "" {
+		c.resultsDir = t.TempDir()
+	}
 	runner, err := newRunner(io.Discard, c)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(runner.active.Wait)
 	return runner
 }
 

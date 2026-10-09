@@ -166,3 +166,33 @@ func TestConfigReadsThePoolAndTheCapOnRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigReadsTheResultsFolderAndRetention(t *testing.T) {
+	base := "url: https://surface.example.com\ntargets:\n  - https://api.example.com\ngithub:\n  owner_ids:\n    - 63745551\n"
+	cases := []struct{ results, dir, retention, error string }{
+		{"", "", "", ""},
+		{"results:\n  dir: /data/results\n  retention: 24h\n", "/data/results", "24h", ""},
+		{"results:\n  dir: 5\n", "", "", "line 8: results.dir must be a path"},
+		{"results:\n  dir: \"\"\n", "", "", "line 8: results.dir must be a path"},
+		{"results:\n  retention: 0s\n", "", "", "line 8: results.retention must be a duration above zero, such as 168h"},
+		{"results:\n  retention: 7d\n", "", "", "line 8: results.retention must be a duration above zero, such as 168h"},
+		{"results:\n  keep: 7\n", "", "", `line 8: unknown key "results.keep"`},
+		{"results: /data\n", "", "", "line 7: results must be a mapping"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(base+c.results), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := loadConfig(path)
+
+		got := ""
+		if err != nil {
+			got = strings.TrimPrefix(err.Error(), path+": ")
+		}
+		if got != c.error || c.error == "" && (config.resultsDir != c.dir || config.retention != c.retention) {
+			t.Errorf("%q: dir %q, retention %q, error %q, want %q, %q, and %q", c.results, config.resultsDir, config.retention, got, c.dir, c.retention, c.error)
+		}
+	}
+}
