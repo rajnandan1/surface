@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -56,7 +61,29 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "surface serve: %v\n", err)
 		return 1
 	}
-	server := &http.Server{Addr: ":8080", Handler: runner, ReadHeaderTimeout: 10 * time.Second}
-	fmt.Fprintf(stderr, "surface serve: %v\n", server.ListenAndServe())
-	return 1
+	listener, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		fmt.Fprintf(stderr, "surface serve: %v\n", err)
+		return 1
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM)
+	return serveUntil(runner, listener, signals, stderr)
+}
+
+func serveUntil(runner *runner, listener net.Listener, signals <-chan os.Signal, stderr io.Writer) int {
+	server := &http.Server{Handler: runner, ReadHeaderTimeout: 10 * time.Second}
+	stopped := make(chan struct{})
+	go func() {
+		<-signals
+		runner.shutdown()
+		server.Shutdown(context.Background())
+		close(stopped)
+	}()
+	if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+		fmt.Fprintf(stderr, "surface serve: %v\n", err)
+		return 1
+	}
+	<-stopped
+	return 0
 }

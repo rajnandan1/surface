@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -47,7 +49,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	signaled, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signaled, timeout)
 	defer cancel()
 	runner := &runnerAPI{url: strings.TrimSuffix(*runnerURL, "/")}
 	if runner.token, err = fetchToken(ctx, runner.url); err != nil {
@@ -62,6 +66,14 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "surface %s run %s target %s\n", version, id, *target)
 
 	result, err := runner.wait(ctx, id)
+	if signaled.Err() != nil {
+		line := fmt.Sprintf("surface run: %v: cancelled run %s", context.Cause(signaled), id)
+		if err := runner.cancel(id); err != nil {
+			line = fmt.Sprintf("surface run: %v: the cancel of run %s failed: %v", context.Cause(signaled), id, err)
+		}
+		fmt.Fprintln(stderr, line)
+		return 2
+	}
 	if err != nil && ctx.Err() != nil {
 		fmt.Fprintf(stderr, "surface run: run %s did not finish within %s\n", id, *timeoutText)
 		return 2
@@ -181,6 +193,20 @@ func (runner *runnerAPI) start(ctx context.Context, request runRequest) (string,
 	return accepted.ID, nil
 }
 
+func (runner *runnerAPI) cancel(id string) error {
+	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
+	response, err := runner.send(ctx, http.MethodPost, "/v1/runs/"+id+"/cancel", nil)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		return runnerLine(response)
+	}
+	return nil
+}
+
 func (runner *runnerAPI) wait(ctx context.Context, id string) (runResult, error) {
 	for {
 		result, err := runner.poll(ctx, id)
@@ -270,6 +296,10 @@ func printResult(w io.Writer, result runResult) {
 				fmt.Fprintf(w, "\n%s %s cleanup\n  %s\n", suite.Path, t.Name, strings.ReplaceAll(t.Cleanup.Failure, "\n", "\n  "))
 			}
 		}
+	}
+	if result.State == "error" {
+		fmt.Fprintf(w, "\nrun %s: error: %s\n", result.ID, result.Reason)
+		return
 	}
 	fmt.Fprintf(w, "\nrun %s: %s\n", result.ID, countTests(result.Suites...))
 }
