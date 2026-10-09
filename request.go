@@ -222,14 +222,3 @@ func noResponse(err error, timeout string) error {
 	}
 	return err
 }
-
-func check(e expect, response *http.Response, body []byte) []string {
-	var failed []string
-	if response.StatusCode != e.Status {
-		failed = append(failed, fmt.Sprintf("status: expected %d, got %d", e.Status, response.StatusCode))
-	}
-	if len(body) > maxResponseBody {
-		failed = append(failed, "body: response is over 10 MiB")
-	}
-	return failed
-}

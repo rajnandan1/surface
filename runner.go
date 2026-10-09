@@ -198,19 +198,12 @@ func (r *runner) runTest(runID, target string, d defaults, t test, result *testR
 	runIDJSON, _ := json.Marshal(runID)
 	vars := map[string]json.RawMessage{"run.id": runIDJSON}
 	state, failure := "passed", ""
-	var failed []string
 	if request, err := newRequest(target, d, t.request, vars); err != nil {
-		failed = []string{"not sent: " + err.Error()}
+		state, failure = "failed", "not sent: "+err.Error()
 	} else if response, body, err := send(runID, request, cmp.Or(t.Timeout, d.Timeout, "30s")); err != nil {
-		failed = []string{"no response: " + err.Error()}
-	} else {
-		failed = check(t.Expect, response, body)
-	}
-	if len(failed) > 0 {
-		state, failure = "failed", failed[0]
-	}
-	if len(failed) > 1 {
-		failure += fmt.Sprintf(" (+%d more)", len(failed)-1)
+		state, failure = "failed", "no response: "+err.Error()
+	} else if checks, _ := checkResponse(t, response.StatusCode, response.Header, body, len(body) > maxResponseBody); checks != nil {
+		state, failure = "failed", lineOne(checks)
 	}
 
 	r.mu.Lock()
