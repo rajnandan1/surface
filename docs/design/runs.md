@@ -36,7 +36,22 @@ surface/api/users.yaml: 4 passed, 1 failed
 surface/api/search.yaml: 2 passed
 
 surface/api/users.yaml update-user
-<the failure text from "What does a failed test print?">
+  status: expected 200, got 404
+  > PATCH https://pr-123.preview.crustdata.com/users/8812
+  > Authorization: Bearer ${{ secrets.production.api_token }}
+  > Content-Type: application/json
+  > User-Agent: surface/1.2.0
+  >
+  > {
+  >   "user_id": 8812,
+  >   "note": "updated by 01j9z3k4m5n6p7q8r9s0t1u2v3"
+  > }
+  < 404 Not Found in 31ms                 ✗ expected 200
+  < Content-Type: application/json
+  <
+  < {
+  <   "error": "user 8812 not found"
+  < }
 
 run 01j9z3k4m5n6p7q8r9s0t1u2v3: 6 passed, 1 failed
 ```
@@ -118,14 +133,14 @@ The poll, `GET /v1/runs/<id>`:
     {"path": "surface/api/users.yaml", "state": "passed",
      "tests": [{"name": "create-user", "state": "passed"}]},
     {"path": "surface/api/search.yaml", "state": "running",
-     "tests": [{"name": "search-person", "state": "failed", "failure": "<text from \"What does a failed test print?\">"}]}
+     "tests": [{"name": "search-person", "state": "failed", "failure": "status: expected 200, got 500\n> POST https://pr-123.preview.crustdata.com/person/search\n…"}]}
   ]
 }
 ```
 
 - A run `state` is `queued`, `running`, `passed`, `failed`, `error`, or `cancelled`. The last four are final. `passed` means every test passed. `failed` means at least one test or suite failed and the run completed. `error` means the runner could not complete the run. `queued` exists so a later queue adds no new state.
-- A suite or test `state` is `pending`, `running`, `passed`, or `failed`. A suite that fails at load ([secrets.md](secrets.md)) is `failed` with its `failure` text and no tests.
-- `failure` is present only on a failed test or suite. Its text is decided in [What does a failed test print?](https://github.com/rajnandan1/surface/issues/9). Secret values in it are already redacted ([secrets.md](secrets.md)).
+- A suite `state` is `pending`, `running`, `passed`, or `failed`. A test `state` is one of those or `skipped` ([failure-text.md](failure-text.md)). A suite that fails at load ([secrets.md](secrets.md)) is `failed` with its `failure` text and no tests.
+- `failure` is present only on a failed or skipped test, or a failed suite. Its text is defined in [failure-text.md](failure-text.md). Secret values in it are already redacted ([secrets.md](secrets.md)).
 - The runner reads the caller from the token, never from the body.
 - How long a finished run stays readable is decided with the runner shape (the map's "Not yet specified").
 
@@ -148,16 +163,16 @@ A run `state` maps to an exit code: `passed` is `0`, `failed` is `1`, `error` an
 The log, in this order:
 
 1. One first line with the client version, the run id, and the target.
-2. One line per suite, in sorted path order, with its passed and failed counts, or its load failure.
-3. For each failed test, the suite path and the test name on one line, then the failure text.
+2. One line per suite, in sorted path order, with its passed, failed, and skipped counts (skipped is left out when it is zero), or its load failure.
+3. For each failed or skipped test, the suite path and the test name on one line, then the failure text indented by two spaces ([failure-text.md](failure-text.md)).
 4. One last line with the run id and the totals.
 
 A rejected run request prints the runner's one-line reason, for example `run: target "http://10.0.0.5:8080" is not in the target list` ([targets.md](targets.md)), and exits `2`.
 
 The client also writes:
 
-- **The job summary.** A table with one row per suite (path, passed, failed) and a totals row, with the run id, to `$GITHUB_STEP_SUMMARY`. GitHub caps it at 1 MiB per step, so the client truncates and says so.
-- **Annotations.** One `::error file=<suite path>,line=<the test's line>::<the first line of the failure>` per failed test, so the failure shows on the suite's line in the pull request. The test's line is the line of the test's mapping node in the YAML ([suite-format.md](suite-format.md)). A suite load failure gets `line=1`.
+- **The job summary.** A table with one row per suite (path, passed, failed, skipped) and a totals row, with the run id, to `$GITHUB_STEP_SUMMARY`. GitHub caps it at 1 MiB per step, so the client truncates and says so.
+- **Annotations.** One `::error file=<suite path>,line=<the test's line>::<test name>: <line one of the failure text>` per failed test, so the failure shows on the suite's line in the pull request. The test's line is the line of the test's mapping node in the YAML ([suite-format.md](suite-format.md)). A suite load failure gets `line=1` and no test name. A skipped test gets no annotation.
 
 ## The action and the client
 

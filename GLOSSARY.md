@@ -44,6 +44,14 @@ _Avoid_: Capture, output, variable
 How strictly a test compares a response body with its example body: by values, by types, or by keys only.
 _Avoid_: Match type, strictness
 
+**Check**:
+One comparison a test makes on its response: the status, one header, one key or item of the example body, one `equal` path, or one `save` path. A test fails when any check fails.
+_Avoid_: Assertion, expectation, matcher
+
+**Failure text**:
+The text the runner records for a failed or skipped test: the first failed check on line one, then the request and the response with the failed checks marked. The client prints it in the CI log.
+_Avoid_: Error message, report, diff
+
 **Secret group**:
 A named set of secrets that the operator creates and that a suite reads by name.
 _Avoid_: Context, environment, secret set, vault

@@ -165,6 +165,6 @@ The runner parses suites with `go.yaml.in/yaml/v3` at v3.0.5, the maintained for
 - Secret groups, who may use them, and redaction: [secrets.md](secrets.md)
 - Where the target comes from, and how the runner builds the request URL: [targets.md](targets.md)
 - How a run starts, who the caller is, and how the result comes back: [runs.md](runs.md)
-- What a failed test prints: [What does a failed test print?](https://github.com/rajnandan1/surface/issues/9)
+- What a failed test prints: [failure-text.md](failure-text.md)
 - What happens to the tests that depend on a failed test, cleanup, and collisions between runs: [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10)
 - The maximum timeout: the "runner shape" item in the map's "Not yet specified" section.
