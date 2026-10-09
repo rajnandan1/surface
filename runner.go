@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,7 +48,6 @@ type testResult struct {
 
 type runner struct {
 	log      *log.Logger
-	client   *http.Client
 	config   config
 	verifier *oidc.IDTokenVerifier
 	mu       sync.Mutex
@@ -55,14 +55,12 @@ type runner struct {
 }
 
 func newRunner(logTo io.Writer, c config) (http.Handler, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	provider, err := oidc.NewProvider(oidc.ClientContext(context.Background(), client), c.issuer)
+	provider, err := oidc.NewProvider(oidc.ClientContext(context.Background(), &http.Client{Timeout: 30 * time.Second}), c.issuer)
 	if err != nil {
 		return nil, fmt.Errorf("github.issuer: %v", err)
 	}
 	r := &runner{
 		log:    log.New(logTo, "", 0),
-		client: client,
 		config: c,
 		verifier: provider.Verifier(&oidc.Config{
 			// go-oidc's issuer and audience errors carry no type, so identify checks both to name them in the 401 line.
@@ -147,7 +145,7 @@ func (r *runner) get(w http.ResponseWriter, req *http.Request, c caller) {
 func (r *runner) execute(run *runResult, texts map[string]string) {
 	var wg sync.WaitGroup
 	for _, suite := range run.Suites {
-		wg.Go(func() { r.runSuite(run.Target, suite, texts[suite.Path]) })
+		wg.Go(func() { r.runSuite(run.ID, run.Target, suite, texts[suite.Path]) })
 	}
 	wg.Wait()
 
@@ -163,7 +161,7 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 	r.log.Printf("run %s %s: %s", run.ID, run.State, total)
 }
 
-func (r *runner) runSuite(target string, result *suiteResult, text string) {
+func (r *runner) runSuite(runID, target string, result *suiteResult, text string) {
 	s, err := loadSuite(result.Path, text)
 	r.mu.Lock()
 	if err != nil {
@@ -180,7 +178,7 @@ func (r *runner) runSuite(target string, result *suiteResult, text string) {
 
 	var wg sync.WaitGroup
 	for i, t := range s.Tests {
-		wg.Go(func() { r.runTest(target, t, entries[i]) })
+		wg.Go(func() { r.runTest(runID, target, s.Defaults, t, entries[i]) })
 	}
 	wg.Wait()
 
@@ -192,34 +190,32 @@ func (r *runner) runSuite(target string, result *suiteResult, text string) {
 	r.mu.Unlock()
 }
 
-func (r *runner) runTest(target string, t test, result *testResult) {
+func (r *runner) runTest(runID, target string, d defaults, t test, result *testResult) {
 	r.mu.Lock()
 	result.State = "running"
 	r.mu.Unlock()
 
+	runIDJSON, _ := json.Marshal(runID)
+	vars := map[string]json.RawMessage{"run.id": runIDJSON}
 	state, failure := "passed", ""
-	if status, err := r.send(target, t); err != nil {
-		state, failure = "failed", "no response: "+err.Error()
-	} else if status != t.Expect.Status {
-		state, failure = "failed", fmt.Sprintf("status: expected %d, got %d", t.Expect.Status, status)
+	var failed []string
+	if request, err := newRequest(target, d, t.request, vars); err != nil {
+		failed = []string{"not sent: " + err.Error()}
+	} else if response, body, err := send(runID, request, cmp.Or(t.Timeout, d.Timeout, "30s")); err != nil {
+		failed = []string{"no response: " + err.Error()}
+	} else {
+		failed = check(t.Expect, response, body)
+	}
+	if len(failed) > 0 {
+		state, failure = "failed", failed[0]
+	}
+	if len(failed) > 1 {
+		failure += fmt.Sprintf(" (+%d more)", len(failed)-1)
 	}
 
 	r.mu.Lock()
 	result.State, result.Failure = state, failure
 	r.mu.Unlock()
-}
-
-func (r *runner) send(target string, t test) (int, error) {
-	request, err := http.NewRequest(t.Method, target+t.Path, nil)
-	if err != nil {
-		return 0, err
-	}
-	response, err := r.client.Do(request)
-	if err != nil {
-		return 0, err
-	}
-	response.Body.Close()
-	return response.StatusCode, nil
 }
 
 type counts struct{ passed, failed int }
