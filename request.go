@@ -17,6 +17,8 @@ import (
 
 const maxResponseBody = 10 << 20
 
+var errNoValue = errors.New("has no value")
+
 var targetClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
@@ -143,7 +145,7 @@ func writeJSON(b *bytes.Buffer, n *yaml.Node, vars map[string]json.RawMessage) e
 		if strings.HasPrefix(n.Value, "${{") && strings.Index(n.Value, "}}") == len(n.Value)-2 {
 			name := strings.TrimSpace(n.Value[3 : len(n.Value)-2])
 			if vars[name] == nil {
-				return fmt.Errorf("${{ %s }} has no value", name)
+				return fmt.Errorf("${{ %s }} %w", name, errNoValue)
 			}
 			b.Write(vars[name])
 			return nil
@@ -173,7 +175,7 @@ func expand(text string, vars map[string]json.RawMessage, escape func(string) st
 		var value string
 		switch {
 		case raw == nil:
-			return "", fmt.Errorf("${{ %s }} has no value", name)
+			return "", fmt.Errorf("${{ %s }} %w", name, errNoValue)
 		case raw[0] == '"':
 			json.Unmarshal(raw, &value)
 		case raw[0] == '{':

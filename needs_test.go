@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -15,52 +12,10 @@ import (
 )
 
 func TestTheDataSafetyExampleSkipsUpdateUserWhenCreateUserGets500(t *testing.T) {
-	doc, err := os.ReadFile("docs/design/data-safety.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, example, _ := strings.Cut(string(doc), "```yaml\n")
-	example, _, _ = strings.Cut(example, "```")
+	log, code, sent := runDataSafetyExample(t, map[string]answer{"POST /orgs/41/users": {500, `{"error": "database is down"}`}})
 
-	var mu sync.Mutex
-	var sent []string
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		sent = append(sent, r.Method+" "+r.URL.Path)
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "POST /orgs":
-			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte(`{"id": 41}`))
-		case "POST /orgs/41/users":
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"error": "database is down"}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer target.Close()
-	issuer := newFakeIssuer(t)
-	fakeGitHubJob(t, func(audience string) string { return issuer.sign(issuer.claims(audience)) })
-	runner := startRunner(t, issuer, target.URL)
-	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
-	pollInterval = 10 * time.Millisecond
-	t.Chdir(t.TempDir())
-	if err := os.MkdirAll("surface/api", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("surface/api/users.yaml", []byte(header+example), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "--timeout", "1m", "surface/"}, &stdout, &stderr)
-
-	log := regexp.MustCompile(`\b[0-9a-z]{26}\b`).ReplaceAllString(stdout.String(), "<id>")
-	log = strings.ReplaceAll(log, target.URL, "<target>")
 	if code != 1 {
-		t.Fatalf("exit code is %d, want 1\nstdout:\n%s\nstderr:\n%s", code, log, &stderr)
+		t.Fatalf("exit code is %d, want 1\n%s", code, log)
 	}
 	for _, want := range []string{
 		"\nsurface/api/users.yaml: 1 passed, 1 failed, 1 skipped\n",
@@ -72,7 +27,7 @@ func TestTheDataSafetyExampleSkipsUpdateUserWhenCreateUserGets500(t *testing.T) 
 			t.Errorf("CI log has no %q:\n%s", want, log)
 		}
 	}
-	if want := []string{"POST /orgs", "POST /orgs/41/users"}; !slices.Equal(sent, want) {
+	if want := []string{"POST /orgs", "POST /orgs/41/users", "DELETE /orgs/41"}; !slices.Equal(sent, want) {
 		t.Errorf("the target got %q, want %q", sent, want)
 	}
 }
@@ -154,9 +109,9 @@ func TestAFailureSkipsTheWholeChainAfterIt(t *testing.T) {
 		got = append(got, testResult{Name: test.Name, State: test.State, Failure: lineOneOf(test.Failure)})
 	}
 	want := []testResult{
-		{"create-user", "failed", "status: expected 201, got 500"},
-		{"update-user", "skipped", "skipped: needs create-user, which failed"},
-		{"delete-user", "skipped", "skipped: needs update-user, which was skipped"},
+		{"create-user", "failed", "status: expected 201, got 500", nil},
+		{"update-user", "skipped", "skipped: needs create-user, which failed", nil},
+		{"delete-user", "skipped", "skipped: needs update-user, which was skipped", nil},
 	}
 	if !slices.Equal(got, want) || suite.State != "failed" {
 		t.Fatalf("suite is %s with tests %+v, want failed with %+v", suite.State, got, want)

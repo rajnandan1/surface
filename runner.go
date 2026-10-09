@@ -41,7 +41,13 @@ type suiteResult struct {
 }
 
 type testResult struct {
-	Name    string `json:"name"`
+	Name    string         `json:"name"`
+	State   string         `json:"state"`
+	Failure string         `json:"failure,omitempty"`
+	Cleanup *cleanupResult `json:"cleanup,omitempty"`
+}
+
+type cleanupResult struct {
 	State   string `json:"state"`
 	Failure string `json:"failure,omitempty"`
 }
@@ -185,6 +191,16 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 		index[t.Name], ended[i] = i, make(chan struct{})
 	}
 	runIDJSON, _ := json.Marshal(runID)
+	vars := func(names ...string) map[string]json.RawMessage {
+		vars := map[string]json.RawMessage{"run.id": runIDJSON}
+		for _, name := range names {
+			for key, value := range saved[index[name]] {
+				vars["needs."+name+"."+key] = value
+			}
+		}
+		return vars
+	}
+	var created []int
 	var wg sync.WaitGroup
 	for i, t := range s.Tests {
 		wg.Go(func() {
@@ -204,49 +220,80 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 			if skipped {
 				return
 			}
-			vars := map[string]json.RawMessage{"run.id": runIDJSON}
-			for _, name := range t.Needs {
-				for key, value := range saved[index[name]] {
-					vars["needs."+name+"."+key] = value
-				}
+			var statusPassed bool
+			saved[i], statusPassed = r.runTest(runID, target, s.Defaults, t, vars(t.Needs...), entries[i])
+			if statusPassed && t.Cleanup != nil {
+				r.mu.Lock()
+				created = append(created, i)
+				r.mu.Unlock()
 			}
-			saved[i] = r.runTest(runID, target, s.Defaults, t, vars, entries[i])
 		})
 	}
 	wg.Wait()
 
+	for _, i := range slices.Backward(created) {
+		t := s.Tests[i]
+		request, err := newRequest(target, s.Defaults, *t.Cleanup, vars(append(slices.Clone(t.Needs), t.Name)...))
+		if errors.Is(err, errNoValue) {
+			continue
+		}
+		cleanup := &cleanupResult{State: "passed"}
+		if err != nil {
+			cleanup.Failure = "not sent: " + err.Error()
+		} else {
+			cleanup.Failure, _, _ = sendAndCheck(runID, request, s.Defaults, test{request: *t.Cleanup})
+		}
+		if cleanup.Failure != "" {
+			cleanup.State = "failed"
+		}
+		r.mu.Lock()
+		entries[i].Cleanup = cleanup
+		r.mu.Unlock()
+	}
+
 	r.mu.Lock()
 	result.State = "passed"
-	if countTests(result).failed > 0 {
+	if c := countTests(result); c.failed > 0 || c.cleanupFailed > 0 {
 		result.State = "failed"
 	}
 	r.mu.Unlock()
 }
 
-func (r *runner) runTest(runID, target string, d defaults, t test, vars map[string]json.RawMessage, result *testResult) map[string]json.RawMessage {
+func (r *runner) runTest(runID, target string, d defaults, t test, vars map[string]json.RawMessage, result *testResult) (map[string]json.RawMessage, bool) {
 	r.mu.Lock()
 	result.State = "running"
 	r.mu.Unlock()
 
-	var saved map[string]json.RawMessage
-	state, failure := "passed", ""
+	failure, saved, statusPassed := "", map[string]json.RawMessage(nil), false
 	if request, err := newRequest(target, d, t.request, vars); err != nil {
-		state, failure = "failed", "not sent: "+err.Error()
-	} else if response, body, elapsed, err := send(runID, request, cmp.Or(t.Timeout, d.Timeout, "30s")); err != nil {
-		state, failure = "failed", failureText([]failedCheck{{text: "no response: " + err.Error()}}, request, t.JSON.Kind != 0, nil, nil, 0)
-	} else if checks, values := checkResponse(t, response.StatusCode, response.Header, body, len(body) > maxResponseBody); checks != nil {
-		state, failure = "failed", failureText(checks, request, t.JSON.Kind != 0, response, body[:min(len(body), maxResponseBody)], elapsed)
+		failure = "not sent: " + err.Error()
 	} else {
-		saved = values
+		failure, saved, statusPassed = sendAndCheck(runID, request, d, t)
 	}
 
 	r.mu.Lock()
-	result.State, result.Failure = state, failure
+	result.State, result.Failure = "passed", failure
+	if failure != "" {
+		result.State = "failed"
+	}
 	r.mu.Unlock()
-	return saved
+	return saved, statusPassed
 }
 
-type counts struct{ passed, failed, skipped int }
+func sendAndCheck(runID string, request *http.Request, d defaults, t test) (failure string, saved map[string]json.RawMessage, statusPassed bool) {
+	response, body, elapsed, err := send(runID, request, cmp.Or(t.Timeout, d.Timeout, "30s"))
+	if err != nil {
+		return failureText([]failedCheck{{text: "no response: " + err.Error()}}, request, t.JSON.Kind != 0, nil, nil, 0), nil, false
+	}
+	checks, saved := checkResponse(t, response.StatusCode, response.Header, body, len(body) > maxResponseBody)
+	statusPassed = response.StatusCode == t.Expect.Status
+	if checks == nil {
+		return "", saved, statusPassed
+	}
+	return failureText(checks, request, t.JSON.Kind != 0, response, body[:min(len(body), maxResponseBody)], elapsed), saved, statusPassed
+}
+
+type counts struct{ passed, failed, skipped, cleanupFailed int }
 
 func countTests(suites ...*suiteResult) counts {
 	var c counts
@@ -260,6 +307,9 @@ func countTests(suites ...*suiteResult) counts {
 			case "skipped":
 				c.skipped++
 			}
+			if t.Cleanup != nil && t.Cleanup.State == "failed" {
+				c.cleanupFailed++
+			}
 		}
 	}
 	return c
@@ -272,6 +322,9 @@ func (c counts) String() string {
 	}
 	if c.skipped > 0 {
 		text += fmt.Sprintf(", %d skipped", c.skipped)
+	}
+	if c.cleanupFailed > 0 {
+		text += fmt.Sprintf(", %d cleanup failed", c.cleanupFailed)
 	}
 	return text
 }

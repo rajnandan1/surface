@@ -22,10 +22,15 @@ func docExample(t *testing.T, doc, testLine string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, after, found := strings.Cut(string(text), "\n"+testLine+"\n")
+	block, found := failureUnder(string(text), testLine)
 	if !found {
 		t.Fatalf("%s has no example under %q", doc, testLine)
 	}
+	return block
+}
+
+func failureUnder(log, testLine string) (string, bool) {
+	_, after, found := strings.Cut(log, "\n"+testLine+"\n")
 	var lines []string
 	for _, line := range strings.Split(after, "\n") {
 		line, indented := strings.CutPrefix(line, "  ")
@@ -34,7 +39,7 @@ func docExample(t *testing.T, doc, testLine string) string {
 		}
 		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), found
 }
 
 type fakeResponse struct {

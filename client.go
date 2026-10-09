@@ -266,6 +266,9 @@ func printResult(w io.Writer, result runResult) {
 			if t.Failure != "" {
 				fmt.Fprintf(w, "\n%s %s\n  %s\n", suite.Path, t.Name, strings.ReplaceAll(t.Failure, "\n", "\n  "))
 			}
+			if t.Cleanup != nil && t.Cleanup.Failure != "" {
+				fmt.Fprintf(w, "\n%s %s cleanup\n  %s\n", suite.Path, t.Name, strings.ReplaceAll(t.Cleanup.Failure, "\n", "\n  "))
+			}
 		}
 	}
 	fmt.Fprintf(w, "\nrun %s: %s\n", result.ID, countTests(result.Suites...))
