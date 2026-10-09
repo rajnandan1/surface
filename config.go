@@ -11,10 +11,17 @@ import (
 type config struct {
 	url     string
 	targets []target
+	limits  limits
 }
 
+type limits struct {
+	requests, runs int
+}
+
+var defaultLimits = limits{requests: 128, runs: 32}
+
 func loadConfig(path string) (config, error) {
-	var c config
+	c := config{limits: defaultLimits}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return c, err
@@ -49,6 +56,12 @@ func loadConfig(path string) (config, error) {
 				}
 				c.targets = append(c.targets, parsed)
 			}
+		case "limits":
+			parsed, err := parseLimits(value)
+			if err != nil {
+				return c, fmt.Errorf("%s: %v", path, err)
+			}
+			c.limits = parsed
 		default:
 			return c, fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, key.Value)
 		}
@@ -63,7 +76,7 @@ func loadConfig(path string) (config, error) {
 }
 
 func parseTargetEntry(entry *yaml.Node) (target, error) {
-	text := entry
+	text, rate := entry, 0
 	if entry.Kind == yaml.MappingNode {
 		text = nil
 		for i := 0; i < len(entry.Content); i += 2 {
@@ -72,9 +85,11 @@ func parseTargetEntry(entry *yaml.Node) (target, error) {
 			case "url":
 				text = value
 			case "rate":
-				if rate, err := strconv.Atoi(value.Value); value.ShortTag() != "!!int" || err != nil || rate < 1 {
+				n, ok := wholeNumber(value)
+				if !ok {
 					return target{}, fmt.Errorf("line %d: rate must be a whole number of 1 or more", value.Line)
 				}
+				rate = n
 			default:
 				return target{}, fmt.Errorf("line %d: unknown key %q", key.Line, key.Value)
 			}
@@ -90,5 +105,31 @@ func parseTargetEntry(entry *yaml.Node) (target, error) {
 	if err != nil {
 		return target{}, fmt.Errorf("line %d: %v", text.Line, err)
 	}
+	parsed.rate = rate
 	return parsed, nil
+}
+
+func parseLimits(node *yaml.Node) (limits, error) {
+	l := defaultLimits
+	if node.Kind != yaml.MappingNode {
+		return l, fmt.Errorf("line %d: limits must be a mapping", node.Line)
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		field := map[string]*int{"requests": &l.requests, "runs": &l.runs}[key.Value]
+		if field == nil {
+			return l, fmt.Errorf("line %d: unknown key %q", key.Line, key.Value)
+		}
+		n, ok := wholeNumber(value)
+		if !ok {
+			return l, fmt.Errorf("line %d: limits.%s must be a whole number of 1 or more", value.Line, key.Value)
+		}
+		*field = n
+	}
+	return l, nil
+}
+
+func wholeNumber(node *yaml.Node) (int, bool) {
+	n, err := strconv.Atoi(node.Value)
+	return n, node.ShortTag() == "!!int" && err == nil && n >= 1
 }

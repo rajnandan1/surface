@@ -66,7 +66,59 @@ func TestConfigReadsTargetStringsAndMappings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := targetList(t, "https://*.preview.crustdata.com", "https://staging.crustdata.com:443"); !slices.Equal(c.targets, want) {
+	want := []target{targetList(t, "https://*.preview.crustdata.com")[0], rated(t, "https://staging.crustdata.com:443", 20)}
+	if !slices.Equal(c.targets, want) {
 		t.Fatalf("targets are %v, want %v", c.targets, want)
+	}
+}
+
+func TestConfigReadsLimitsAndTheirDefaults(t *testing.T) {
+	cases := []struct {
+		limits string
+		want   limits
+	}{
+		{"", limits{requests: 128, runs: 32}},
+		{"limits:\n  requests: 2\n", limits{requests: 2, runs: 32}},
+		{"limits:\n  requests: 2\n  runs: 1\n", limits{requests: 2, runs: 1}},
+	}
+	for _, c := range cases {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte("url: https://surface.example.com\ntargets:\n  - https://api.crustdata.com\n"+c.limits), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := loadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.limits != c.want {
+			t.Errorf("%q: limits are %+v, want %+v", c.limits, config.limits, c.want)
+		}
+	}
+}
+
+func TestServeRefusesBadLimits(t *testing.T) {
+	cases := []struct{ limits, line string }{
+		{"limits:\n  requests: 0\n", "line 5: limits.requests must be a whole number of 1 or more"},
+		{"limits:\n  requests: -4\n", "line 5: limits.requests must be a whole number of 1 or more"},
+		{"limits:\n  runs: 2.5\n", "line 5: limits.runs must be a whole number of 1 or more"},
+		{"limits:\n  runs: many\n", "line 5: limits.runs must be a whole number of 1 or more"},
+		{"limits:\n  runs: \"4\"\n", "line 5: limits.runs must be a whole number of 1 or more"},
+		{"limits:\n  pool: 4\n", `line 5: unknown key "pool"`},
+		{"limits: 4\n", "line 4: limits must be a mapping"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte("url: https://surface.example.com\ntargets:\n  - https://api.crustdata.com\n"+c.limits), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var stdout, stderr bytes.Buffer
+		code := cli([]string{"serve", "--config", path}, &stdout, &stderr)
+
+		want := "surface serve: " + path + ": " + c.line + "\n"
+		if code != 1 || stderr.String() != want {
+			t.Errorf("%q: exit code %d, stderr %q, want 1 and %q", c.limits, code, stderr.String(), want)
+		}
 	}
 }

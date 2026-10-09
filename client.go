@@ -132,6 +132,16 @@ func startRun(ctx context.Context, runner string, request runRequest) (string, e
 		return "", err
 	}
 	response, err := send(ctx, http.MethodPost, runner+"/v1/runs", bytes.NewReader(body))
+	for err == nil && response.StatusCode == http.StatusServiceUnavailable {
+		full := runnerLine(response)
+		response.Body.Close()
+		select {
+		case <-ctx.Done():
+			return "", full
+		case <-time.After(pollInterval):
+		}
+		response, err = send(ctx, http.MethodPost, runner+"/v1/runs", bytes.NewReader(body))
+	}
 	if err != nil {
 		return "", err
 	}

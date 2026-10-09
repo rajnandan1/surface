@@ -36,7 +36,7 @@ func TestRunPrintsTheResultAndExits1WhenATestFails(t *testing.T) {
 		}
 	}))
 	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL)))
+	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL), defaultLimits))
 	defer runner.Close()
 	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
 	pollInterval = 10 * time.Millisecond
@@ -73,7 +73,7 @@ run <id>: 1 passed, 1 failed
 func TestRunWithABrokenSuiteStillRunsTheValidSuite(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL)))
+	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL), defaultLimits))
 	defer runner.Close()
 	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
 	pollInterval = 10 * time.Millisecond
@@ -115,7 +115,7 @@ func TestRunWithATargetNotInTheTargetListSendsNoRequest(t *testing.T) {
 	var requests atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
 	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, "https://api.crustdata.com")))
+	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, "https://api.crustdata.com"), defaultLimits))
 	defer runner.Close()
 	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
 	pollInterval = 10 * time.Millisecond

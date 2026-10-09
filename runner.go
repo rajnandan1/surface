@@ -45,16 +45,29 @@ type runner struct {
 	log     *log.Logger
 	client  *http.Client
 	targets []target
+	limits  limits
+	pool    chan struct{}
 	mu      sync.Mutex
 	runs    map[string]*runResult
+	running int
+	rates   map[target]*rateLimit
 }
 
-func newRunner(logTo io.Writer, targets []target) http.Handler {
+type rateLimit struct {
+	mu    sync.Mutex
+	every time.Duration
+	next  time.Time
+}
+
+func newRunner(logTo io.Writer, targets []target, l limits) http.Handler {
 	r := &runner{
 		log:     log.New(logTo, "", 0),
 		client:  &http.Client{Timeout: 30 * time.Second},
 		targets: targets,
+		limits:  l,
+		pool:    make(chan struct{}, l.requests),
 		runs:    map[string]*runResult{},
+		rates:   map[target]*rateLimit{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", r.start)
@@ -99,10 +112,19 @@ func (r *runner) start(w http.ResponseWriter, req *http.Request) {
 		run.Suites = append(run.Suites, &suiteResult{Path: path, State: "pending"})
 	}
 	r.mu.Lock()
-	r.runs[run.ID] = run
+	full := r.running >= r.limits.runs
+	if !full {
+		r.running++
+		r.runs[run.ID] = run
+	}
 	r.mu.Unlock()
+	if full {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, fmt.Sprintf("run: the runner holds as many runs as its cap of %d allows", r.limits.runs), http.StatusServiceUnavailable)
+		return
+	}
 	r.log.Printf("run %s accepted target %s", run.ID, run.Target)
-	go r.execute(run, request.Suites)
+	go r.execute(run, request.Suites, r.rateLimitFor(parsed))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -123,14 +145,47 @@ func (r *runner) get(w http.ResponseWriter, req *http.Request) {
 	w.Write(body)
 }
 
-func (r *runner) execute(run *runResult, texts map[string]string) {
+func (r *runner) rateLimitFor(t target) *rateLimit {
+	lowest := 0
+	for _, entry := range r.targets {
+		if entry.rate > 0 && entry.matches(t) && (lowest == 0 || entry.rate < lowest) {
+			lowest = entry.rate
+		}
+	}
+	if lowest == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rates[t] == nil {
+		r.rates[t] = &rateLimit{every: time.Second / time.Duration(lowest)}
+	}
+	return r.rates[t]
+}
+
+func (l *rateLimit) wait() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	turn := time.Now()
+	if turn.Before(l.next) {
+		turn = l.next
+	}
+	l.next = turn.Add(l.every)
+	l.mu.Unlock()
+	time.Sleep(time.Until(turn))
+}
+
+func (r *runner) execute(run *runResult, texts map[string]string, rate *rateLimit) {
 	var wg sync.WaitGroup
 	for _, suite := range run.Suites {
-		wg.Go(func() { r.runSuite(run.Target, suite, texts[suite.Path]) })
+		wg.Go(func() { r.runSuite(run.Target, rate, suite, texts[suite.Path]) })
 	}
 	wg.Wait()
 
 	r.mu.Lock()
+	r.running--
 	run.State = "passed"
 	for _, suite := range run.Suites {
 		if suite.State == "failed" {
@@ -142,7 +197,7 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 	r.log.Printf("run %s %s: %s", run.ID, run.State, total)
 }
 
-func (r *runner) runSuite(target string, result *suiteResult, text string) {
+func (r *runner) runSuite(target string, rate *rateLimit, result *suiteResult, text string) {
 	s, err := loadSuite(result.Path, text)
 	r.mu.Lock()
 	if err != nil {
@@ -159,7 +214,7 @@ func (r *runner) runSuite(target string, result *suiteResult, text string) {
 
 	var wg sync.WaitGroup
 	for i, t := range s.Tests {
-		wg.Go(func() { r.runTest(target, t, entries[i]) })
+		wg.Go(func() { r.runTest(target, rate, t, entries[i]) })
 	}
 	wg.Wait()
 
@@ -171,13 +226,13 @@ func (r *runner) runSuite(target string, result *suiteResult, text string) {
 	r.mu.Unlock()
 }
 
-func (r *runner) runTest(target string, t test, result *testResult) {
+func (r *runner) runTest(target string, rate *rateLimit, t test, result *testResult) {
 	r.mu.Lock()
 	result.State = "running"
 	r.mu.Unlock()
 
 	state, failure := "passed", ""
-	if status, err := r.send(target, t); err != nil {
+	if status, err := r.send(target, rate, t); err != nil {
 		state, failure = "failed", "no response: "+err.Error()
 	} else if status != t.Expect.Status {
 		state, failure = "failed", fmt.Sprintf("status: expected %d, got %d", t.Expect.Status, status)
@@ -188,11 +243,15 @@ func (r *runner) runTest(target string, t test, result *testResult) {
 	r.mu.Unlock()
 }
 
-func (r *runner) send(target string, t test) (int, error) {
+func (r *runner) send(target string, rate *rateLimit, t test) (int, error) {
 	request, err := http.NewRequest(t.Method, target+t.Path, nil)
 	if err != nil {
 		return 0, err
 	}
+	rate.wait()
+	// The Go runtime wakes blocked channel senders in the order they blocked, so pool slots go out in the order asked.
+	r.pool <- struct{}{}
+	defer func() { <-r.pool }()
 	response, err := r.client.Do(request)
 	if err != nil {
 		return 0, err

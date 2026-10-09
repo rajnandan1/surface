@@ -11,7 +11,7 @@ import (
 func postRun(t *testing.T, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	response := httptest.NewRecorder()
-	newRunner(io.Discard, targetList(t, "https://api.crustdata.com", "https://*.preview.crustdata.com")).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/runs", strings.NewReader(body)))
+	newRunner(io.Discard, targetList(t, "https://api.crustdata.com", "https://*.preview.crustdata.com"), defaultLimits).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/runs", strings.NewReader(body)))
 	return response
 }
 

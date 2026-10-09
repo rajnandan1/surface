@@ -51,7 +51,7 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "surface serve: %v\n", err)
 		return 1
 	}
-	server := &http.Server{Addr: ":8080", Handler: newRunner(stdout, config.targets), ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Addr: ":8080", Handler: newRunner(stdout, config.targets, config.limits), ReadHeaderTimeout: 10 * time.Second}
 	fmt.Fprintf(stderr, "surface serve: %v\n", server.ListenAndServe())
 	return 1
 }
