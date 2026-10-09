@@ -12,7 +12,7 @@ surface/api/users.yaml create-user
   > POST https://pr-123.preview.crustdata.com/users
   > Authorization: Bearer ${{ secrets.production.api_token }}
   > Content-Type: application/x-www-form-urlencoded
-  > User-Agent: surface/1.2.0
+  > User-Agent: surface/1.2.0 (run 01j9z3k4m5n6p7q8r9s0t1u2v3)
   >
   > email=u-01j9z3k4m5n6p7q8r9s0t1u2v3%40example.com&plan=free
   < 201 Created in 212ms                  ✓
@@ -49,7 +49,7 @@ A test that fails on the status, and a test that is skipped:
 surface/api/search.yaml no-token-is-rejected
   status: expected 401, got 200
   > POST https://pr-123.preview.crustdata.com/person/search
-  > User-Agent: surface/1.2.0
+  > User-Agent: surface/1.2.0 (run 01j9z3k4m5n6p7q8r9s0t1u2v3)
   < 200 OK in 84ms                        ✗ expected 401
   < Content-Type: application/json
   <
@@ -60,8 +60,6 @@ surface/api/search.yaml no-token-is-rejected
 surface/api/users.yaml update-user
   skipped: needs create-user, which failed
 ```
-
-The `User-Agent` value above is a placeholder. The text the runner appends is not yet specified (the map's "Not yet specified").
 
 ## Where it shows
 
@@ -155,4 +153,4 @@ no response: connection refused
 - The log layout, the `failure` field, the job summary, and the annotations: [runs.md](runs.md)
 - The match modes and the path syntax: [suite-format.md](suite-format.md)
 - When a test is skipped, cleanup, and collisions between runs: [data-safety.md](data-safety.md)
-- The text the runner appends to `User-Agent`: the map's "Not yet specified"
+- The text the runner adds to `User-Agent`: [suite-format.md](suite-format.md)

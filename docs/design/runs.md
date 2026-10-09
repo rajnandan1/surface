@@ -42,7 +42,7 @@ surface/api/users.yaml update-user
   > PATCH https://pr-123.preview.crustdata.com/users/8812
   > Authorization: Bearer ${{ secrets.production.api_token }}
   > Content-Type: application/json
-  > User-Agent: surface/1.2.0
+  > User-Agent: surface/1.2.0 (run 01j9z3k4m5n6p7q8r9s0t1u2v3)
   >
   > {
   >   "user_id": 8812,

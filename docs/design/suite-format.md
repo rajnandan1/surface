@@ -104,6 +104,17 @@ tests:
 - A test header set to `null` removes the default header.
 - There is no `auth:` block. Auth is a header.
 
+## The User-Agent header
+
+The runner adds its own text to the `User-Agent` header of every request it sends to the target. The target's owner can then tell surface traffic apart from user traffic, and a line in the target's access log points to one run. The decisions come from [What does the runner add to the User-Agent header?](https://github.com/rajnandan1/surface/issues/15).
+
+- The text is `surface/<version> (run <run id>)`, for example `surface/1.2.0 (run 01j9z3k4m5n6p7q8r9s0t1u2v3)`. The version comes from the `VERSION` file ([install.md](install.md)). The run id is defined in [runs.md](runs.md). The text is one product and one comment, as RFC 9110 defines them.
+- When a test sets no `User-Agent`, the runner sends its text alone.
+- When a test sets a `User-Agent` in `headers` or `defaults.headers`, the runner appends one space and its text: `my-tests/2.0 surface/1.2.0 (run 01j9z3k4m5n6p7q8r9s0t1u2v3)`. When the test's value is empty, the runner sends its text alone.
+- A suite cannot remove the runner's text, because a suite is untrusted input ([ADR 0001](../adr/0001-suites-are-untrusted-input.md)). `User-Agent: null` removes only the suite's default `User-Agent`. So v1 cannot test a request with no `User-Agent`, or a request with one exact `User-Agent`.
+- A cleanup request carries the same text ([data-safety.md](data-safety.md)).
+- The text is fixed. The runner config has no setting for it. A WAF rule that must find surface traffic looks for `surface/` in the value. The text is at the end of the value when a test sets its own `User-Agent`.
+
 ## A test
 
 | Field | Required | What it holds |

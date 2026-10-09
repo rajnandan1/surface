@@ -71,7 +71,7 @@ surface/api/users.yaml: 3 passed, 1 cleanup failed
 surface/api/users.yaml create-org cleanup
   status: expected 204, got 500
   > DELETE https://pr-123.preview.crustdata.com/orgs/41
-  > User-Agent: surface/1.2.0
+  > User-Agent: surface/1.2.0 (run 01j9z3k4m5n6p7q8r9s0t1u2v3)
   < 500 Internal Server Error in 12ms     ✗ expected 204
   < Content-Type: application/json
   <
