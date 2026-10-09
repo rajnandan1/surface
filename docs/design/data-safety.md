@@ -1,6 +1,6 @@
 # Data safety
 
-A test can create, change, and delete data on the target. Tests in a suite run in parallel unless they declare `needs` ([ADR 0003](../adr/0003-tests-run-in-parallel-unless-they-declare-needs.md)), and a test reads the saved values of the tests in its `needs` (see [GLOSSARY.md](../../GLOSSARY.md)). This doc defines what happens to the tests that need a failed test, how a test declares the cleanup of the data it creates, when and in what order cleanups run, what a failed cleanup does, and how two runs on one target stay apart. The decisions come from [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10) and [ADR 0009](../adr/0009-a-test-declares-the-cleanup-of-the-data-it-creates.md).
+A test can create, change, and delete data on the target. Tests in a suite run in parallel unless they declare `needs` ([ADR 0003](../adr/0003-tests-run-in-parallel-unless-they-declare-needs.md)), and a test reads the saved values of the tests in its `needs` (see [GLOSSARY.md](../../GLOSSARY.md)). This doc defines what happens to the tests that need a failed test, why a failed test does not run again, how a test declares the cleanup of the data it creates, when and in what order cleanups run, what a failed cleanup does, and how two runs on one target stay apart. The decisions come from [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10), [Does a failed test run again?](https://github.com/rajnandan1/surface/issues/16), and [ADR 0009](../adr/0009-a-test-declares-the-cleanup-of-the-data-it-creates.md).
 
 ## Example
 
@@ -90,6 +90,18 @@ The suite is `failed`, and the CI job exits `1`.
 - A skipped test sends no request, and its cleanup does not run.
 - The suite is `failed`, because the test that caused the skips failed. The suite line counts the skipped tests ([failure-text.md](failure-text.md)).
 - Why skip and not run: a dependent that runs after a failed test produces a second failure, and that failure hides the first. The author wants the first.
+- The runner sends each test once. A failed test does not run again ("A flaky test" below).
+
+## A flaky test
+
+- A flaky test fails on some runs and passes on others, with no change to the suite or the target.
+- The runner sends each test and each cleanup once. It does not send a failed test again, and the suite format has no `retry` field. Go's own resend on a closed connection is a separate thing ([limits.md](limits.md)).
+- A flake is a bug in the test or in the target. The failure text shows the request as sent and the response as received, so the author sees which one ([failure-text.md](failure-text.md)).
+- The author fixes the cause. Two tests that change the same data get `needs` between them. A value that must be unique carries `${{ run.id }}` ("Collisions between runs" below). A slow response gets a larger `timeout`, up to 5m ([limits.md](limits.md)). A preview target that has just deployed is the CI job's work: the job waits until the target answers, and then it starts the run.
+- For a one-off flake, the author re-runs the failed job in GitHub Actions. The re-run is a new run with a new `run.id`, so it does not collide with the data that the first run left.
+- Known limit: a test that reads data the target writes later cannot pass in v1, because surface has no wait. An example is a search index that shows a new user some seconds after `create-user`. The author leaves that test out of the suite.
+- Why no retry: a retry hides a flake that can be a real bug in the target. A test that got `201` and then failed a body check created data, so a second try creates the data again. That try usually gets `409`, because the `${{ run.id }}` value is the same, and the cleanup gets one set of saved values for two records. A retry also adds requests to the pool and time against the run time limit ([limits.md](limits.md)).
+- A later 1.x can add a `retry` field with no format break ([ADR 0012](../adr/0012-within-a-major-version-the-api-only-grows-and-the-runner-rejects-what-it-does-not-know.md)). A measured flake rate, or a suite that must wait for the target, is the trigger.
 
 ## Cleanup
 
@@ -156,4 +168,4 @@ The suite is `failed`, and the CI job exits `1`.
 - Redaction: [secrets.md](secrets.md)
 - What a runner restart does to a run in flight: [runner.md](runner.md)
 - The run time limit and the request limits: [limits.md](limits.md)
-- Whether a failed test runs again, and whether its cleanup runs between tries: the map's "Not yet specified"
+- Go's resend on a closed connection: [limits.md](limits.md)

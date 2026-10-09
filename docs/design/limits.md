@@ -73,6 +73,7 @@ The runner refuses to start when `limits.requests` or `limits.runs` is not a who
 - When a target matches more than one entry, the lowest `rate` of the matching entries applies.
 - A request first waits for its target's rate, then for a pool slot. So a request that waits for a slow target holds no pool slot, and the runs on other targets do not wait for it.
 - The runner does not retry a `429`. A test that gets `429` sees it as its response.
+- The runner sends each test and each cleanup once ([data-safety.md](data-safety.md)). One resend sits inside Go's `net/http`, and the runner keeps it: when the runner reuses a kept-open connection that the target has already closed, Go sends a `GET`, `HEAD`, `OPTIONS`, or `TRACE` request, or a request with an `Idempotency-Key` or `X-Idempotency-Key` header, again on a new connection. The test sees one response. The resend holds the same pool slot and does not wait for a rate turn.
 - The runner has its own rate code, about 20 lines. `golang.org/x/time/rate` is at v0.x, and the library rule of [ADR 0002](../adr/0002-own-suite-format-and-engine.md) needs v1.0.0 or later.
 - Why requests per second and not requests in flight: a target states its own limit in requests per second and answers `429` above it.
 - Why off by default: the operator knows which targets have a limit of their own, for example production with a quota per API key. A preview environment has no quota, and the pool bounds it.
