@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -69,6 +70,47 @@ run <id>: 1 passed, 1 failed
 	}
 }
 
+func TestRunWithABrokenSuiteStillRunsTheValidSuite(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer target.Close()
+	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL)))
+	defer runner.Close()
+	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
+	pollInterval = 10 * time.Millisecond
+
+	t.Chdir(t.TempDir())
+	writeSuite(t, "surface/api/users.yaml", usersSuite)
+	writeSuite(t, "surface/api/broken.yaml", strings.Replace(usersSuite, "status: 200", "staus: 200", 1))
+
+	var stdout, stderr bytes.Buffer
+	code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "--timeout", "1m", "surface/"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code is %d, want 1\nstdout:\n%s\nstderr:\n%s", code, &stdout, &stderr)
+	}
+	log := regexp.MustCompile(`\b[0-9a-z]{26}\b`).ReplaceAllString(stdout.String(), "<id>")
+	log = strings.ReplaceAll(log, target.URL, "<target>")
+	want := `surface 1.0.0 run <id> target <target>
+suite surface/api/broken.yaml: line 8: unknown field "staus" (runner 1.0.0)
+surface/api/users.yaml: 2 passed
+
+run <id>: 2 passed
+`
+	if log != want {
+		t.Fatalf("CI log is\n%s\nwant\n%s", log, want)
+	}
+}
+
+func writeSuite(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunWithATargetNotInTheTargetListSendsNoRequest(t *testing.T) {
 	var requests atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
@@ -79,12 +121,7 @@ func TestRunWithATargetNotInTheTargetListSendsNoRequest(t *testing.T) {
 	pollInterval = 10 * time.Millisecond
 
 	t.Chdir(t.TempDir())
-	if err := os.MkdirAll("surface/api", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("surface/api/users.yaml", []byte(usersSuite), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeSuite(t, "surface/api/users.yaml", usersSuite)
 
 	var stdout, stderr bytes.Buffer
 	code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "--timeout", "1m", "surface/"}, &stdout, &stderr)

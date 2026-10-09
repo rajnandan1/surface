@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -71,6 +73,26 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 2
+}
+
+func checkCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: surface check <suites>")
+		return 2
+	}
+	suites, err := collectSuites(args[0])
+	if err != nil {
+		fmt.Fprintf(stderr, "surface check: %v\n", err)
+		return 2
+	}
+	code := 0
+	for _, path := range slices.Sorted(maps.Keys(suites)) {
+		if _, err := loadSuite(path, suites[path]); err != nil {
+			fmt.Fprintln(stdout, err)
+			code = 1
+		}
+	}
+	return code
 }
 
 func collectSuites(root string) (map[string]string, error) {
