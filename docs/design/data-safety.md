@@ -53,7 +53,7 @@ When `create-user` gets a `500`:
 surface/api/users.yaml: 1 passed, 1 failed, 1 skipped
 
 surface/api/users.yaml create-user
-  status: expected 201, got 500
+  status: expected 201, got 500 (+1 more)
   > POST https://pr-123.preview.crustdata.com/orgs/41/users
   …
 

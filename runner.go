@@ -161,6 +161,8 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 	r.log.Printf("run %s %s: %s", run.ID, run.State, total)
 }
 
+var skipReason = map[string]string{"failed": "failed", "skipped": "was skipped"}
+
 func (r *runner) runSuite(runID, target string, result *suiteResult, text string) {
 	s, err := loadSuite(result.Path, text)
 	r.mu.Lock()
@@ -176,9 +178,40 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 	entries := result.Tests
 	r.mu.Unlock()
 
+	index := map[string]int{}
+	ended := make([]chan struct{}, len(s.Tests))
+	saved := make([]map[string]json.RawMessage, len(s.Tests))
+	for i, t := range s.Tests {
+		index[t.Name], ended[i] = i, make(chan struct{})
+	}
+	runIDJSON, _ := json.Marshal(runID)
 	var wg sync.WaitGroup
 	for i, t := range s.Tests {
-		wg.Go(func() { r.runTest(runID, target, s.Defaults, t, entries[i]) })
+		wg.Go(func() {
+			defer close(ended[i])
+			for _, name := range t.Needs {
+				<-ended[index[name]]
+			}
+			r.mu.Lock()
+			for _, name := range t.Needs {
+				if reason, ok := skipReason[entries[index[name]].State]; ok {
+					entries[i].State, entries[i].Failure = "skipped", fmt.Sprintf("skipped: needs %s, which %s", name, reason)
+					break
+				}
+			}
+			skipped := entries[i].State == "skipped"
+			r.mu.Unlock()
+			if skipped {
+				return
+			}
+			vars := map[string]json.RawMessage{"run.id": runIDJSON}
+			for _, name := range t.Needs {
+				for key, value := range saved[index[name]] {
+					vars["needs."+name+"."+key] = value
+				}
+			}
+			saved[i] = r.runTest(runID, target, s.Defaults, t, vars, entries[i])
+		})
 	}
 	wg.Wait()
 
@@ -190,28 +223,30 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 	r.mu.Unlock()
 }
 
-func (r *runner) runTest(runID, target string, d defaults, t test, result *testResult) {
+func (r *runner) runTest(runID, target string, d defaults, t test, vars map[string]json.RawMessage, result *testResult) map[string]json.RawMessage {
 	r.mu.Lock()
 	result.State = "running"
 	r.mu.Unlock()
 
-	runIDJSON, _ := json.Marshal(runID)
-	vars := map[string]json.RawMessage{"run.id": runIDJSON}
+	var saved map[string]json.RawMessage
 	state, failure := "passed", ""
 	if request, err := newRequest(target, d, t.request, vars); err != nil {
 		state, failure = "failed", "not sent: "+err.Error()
 	} else if response, body, elapsed, err := send(runID, request, cmp.Or(t.Timeout, d.Timeout, "30s")); err != nil {
 		state, failure = "failed", failureText([]failedCheck{{text: "no response: " + err.Error()}}, request, t.JSON.Kind != 0, nil, nil, 0)
-	} else if checks, _ := checkResponse(t, response.StatusCode, response.Header, body, len(body) > maxResponseBody); checks != nil {
+	} else if checks, values := checkResponse(t, response.StatusCode, response.Header, body, len(body) > maxResponseBody); checks != nil {
 		state, failure = "failed", failureText(checks, request, t.JSON.Kind != 0, response, body[:min(len(body), maxResponseBody)], elapsed)
+	} else {
+		saved = values
 	}
 
 	r.mu.Lock()
 	result.State, result.Failure = state, failure
 	r.mu.Unlock()
+	return saved
 }
 
-type counts struct{ passed, failed int }
+type counts struct{ passed, failed, skipped int }
 
 func countTests(suites ...*suiteResult) counts {
 	var c counts
@@ -222,6 +257,8 @@ func countTests(suites ...*suiteResult) counts {
 				c.passed++
 			case "failed":
 				c.failed++
+			case "skipped":
+				c.skipped++
 			}
 		}
 	}
@@ -229,8 +266,12 @@ func countTests(suites ...*suiteResult) counts {
 }
 
 func (c counts) String() string {
-	if c.failed == 0 {
-		return fmt.Sprintf("%d passed", c.passed)
+	text := fmt.Sprintf("%d passed", c.passed)
+	if c.failed > 0 {
+		text += fmt.Sprintf(", %d failed", c.failed)
 	}
-	return fmt.Sprintf("%d passed, %d failed", c.passed, c.failed)
+	if c.skipped > 0 {
+		text += fmt.Sprintf(", %d skipped", c.skipped)
+	}
+	return text
 }
