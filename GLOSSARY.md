@@ -40,6 +40,10 @@ _Avoid_: Allow-list, whitelist, host list
 A value a test takes from its response, so later tests in the same suite can use it.
 _Avoid_: Capture, output, variable
 
+**Cleanup**:
+The request a test declares to remove the data it created. The runner sends it after every test in the suite has ended.
+_Avoid_: Teardown, after hook, finalizer, rollback
+
 **Match mode**:
 How strictly a test compares a response body with its example body: by values, by types, or by keys only.
 _Avoid_: Match type, strictness

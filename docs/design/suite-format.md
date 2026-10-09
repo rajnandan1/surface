@@ -57,6 +57,11 @@ tests:
     save:
       user_id: body.data.id     # If the path finds nothing, the test fails.
       location: headers.Location
+    cleanup:                    # Removes what this test created. Runs after the suite's tests end. See data-safety.md.
+      method: DELETE
+      path: /users/${{ needs.create-user.user_id }}
+      expect:
+        status: 204
 
   - name: update-user
     needs: [create-user]        # Waits for create-user, and can read its saved values.
@@ -114,6 +119,7 @@ tests:
 | `timeout` | No | A Go duration, for example `500ms` or `10s`. It covers connect, send, wait, and read. It overrides `defaults.timeout`. The runner default is 30s. |
 | `needs` | No | A list of test names that this test waits for. |
 | `save` | No | A map from a saved value's name to a path. |
+| `cleanup` | No | One request, with its own `expect`, that removes the data this test created. It runs after every test in the suite has ended. The rules are in [data-safety.md](data-safety.md). |
 | `expect` | Yes | The response the test must get back. `expect.status` is required. |
 
 - A test has one of `json`, `form`, `body`, or none.
@@ -125,6 +131,7 @@ Tests in a suite run in parallel unless they declare `needs` ([ADR 0003](../adr/
 
 - A test with `needs` waits for every test in its list.
 - A test can read only the saved values of the tests in its `needs`.
+- A test whose `needs` test failed or was skipped is skipped ([data-safety.md](data-safety.md)).
 - A cycle in `needs` is a load error. A name in `needs` that is not in the suite is a load error.
 
 ## Saved values and paths
@@ -166,5 +173,5 @@ The runner parses suites with `go.yaml.in/yaml/v3` at v3.0.5, the maintained for
 - Where the target comes from, and how the runner builds the request URL: [targets.md](targets.md)
 - How a run starts, who the caller is, and how the result comes back: [runs.md](runs.md)
 - What a failed test prints: [failure-text.md](failure-text.md)
-- What happens to the tests that depend on a failed test, cleanup, and collisions between runs: [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10)
+- Skipped tests, cleanup, and collisions between runs: [data-safety.md](data-safety.md)
 - The maximum timeout: the "runner shape" item in the map's "Not yet specified" section.

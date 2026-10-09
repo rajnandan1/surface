@@ -11,4 +11,4 @@ The runner starts all tests of a suite at the same time. A test that must wait f
 
 - A reader who knows Venom, runn, or scenarigo expects file order. Two tests that change the same data, and do not declare `needs`, can run at the same time.
 - A cycle in `needs` is a load error. A `${{ needs.<test>.<value> }}` that names a test missing from `needs` is a load error.
-- What happens to the tests that depend on a failed test, and how cleanup works, is decided in [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10).
+- A test whose `needs` test failed or was skipped is skipped ([data-safety.md](../design/data-safety.md)). Cleanup is [ADR 0009](0009-a-test-declares-the-cleanup-of-the-data-it-creates.md).

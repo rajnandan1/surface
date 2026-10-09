@@ -99,7 +99,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: 6 passed, 1 failed
 
 - When GitHub cancels a job, it sends the step's process `SIGINT`, then `SIGTERM` after 7.5 seconds, then kills it 2.5 seconds later. A composite action has no `post:` step, so the client handles the signal itself.
 - On `SIGINT` or `SIGTERM`, the client sends `POST /v1/runs/<id>/cancel` and exits `2`.
-- The runner starts no new test for a cancelled run, lets in-flight requests finish or time out, and sets the run's `state` to `cancelled`. What happens to the data those tests created is decided in [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10).
+- The runner starts no new test for a cancelled run, lets in-flight requests finish or time out, runs the cleanups of the tests whose status check passed ([data-safety.md](data-safety.md)), and sets the run's `state` to `cancelled`.
 
 ## The wire shapes
 
@@ -131,16 +131,17 @@ The poll, `GET /v1/runs/<id>`:
   "target": "https://pr-123.preview.crustdata.com",
   "suites": [
     {"path": "surface/api/users.yaml", "state": "passed",
-     "tests": [{"name": "create-user", "state": "passed"}]},
+     "tests": [{"name": "create-user", "state": "passed", "cleanup": {"state": "passed"}}]},
     {"path": "surface/api/search.yaml", "state": "running",
      "tests": [{"name": "search-person", "state": "failed", "failure": "status: expected 200, got 500\n> POST https://pr-123.preview.crustdata.com/person/search\n…"}]}
   ]
 }
 ```
 
-- A run `state` is `queued`, `running`, `passed`, `failed`, `error`, or `cancelled`. The last four are final. `passed` means every test passed. `failed` means at least one test or suite failed and the run completed. `error` means the runner could not complete the run. `queued` exists so a later queue adds no new state.
-- A suite `state` is `pending`, `running`, `passed`, or `failed`. A test `state` is one of those or `skipped` ([failure-text.md](failure-text.md)). A suite that fails at load ([secrets.md](secrets.md)) is `failed` with its `failure` text and no tests.
+- A run `state` is `queued`, `running`, `passed`, `failed`, `error`, or `cancelled`. The last four are final. `passed` means every test passed. `failed` means at least one test, suite, or cleanup failed and the run completed. `error` means the runner could not complete the run. `queued` exists so a later queue adds no new state.
+- A suite `state` is `pending`, `running`, `passed`, or `failed`. It is `failed` when any test or cleanup in it failed. A test `state` is one of those or `skipped` ([failure-text.md](failure-text.md)). A suite that fails at load ([secrets.md](secrets.md)) is `failed` with its `failure` text and no tests.
 - `failure` is present only on a failed or skipped test, or a failed suite. Its text is defined in [failure-text.md](failure-text.md). Secret values in it are already redacted ([secrets.md](secrets.md)).
+- `cleanup` is present on a test entry only when the test's cleanup ran. It holds `state`, `passed` or `failed`, and on `failed` a `failure` text in the same format ([data-safety.md](data-safety.md)).
 - The runner reads the caller from the token, never from the body.
 - How long a finished run stays readable is decided with the runner shape (the map's "Not yet specified").
 
@@ -155,7 +156,7 @@ The poll, `GET /v1/runs/<id>`:
 | Exit code | Meaning |
 | --- | --- |
 | `0` | Every test in every suite passed. |
-| `1` | At least one test or suite failed. The run completed. |
+| `1` | At least one test, suite, or cleanup failed. The run completed. |
 | `2` | The run did not complete. The run request was rejected, the token was rejected, the runner returned an error, the run was cancelled, no suites were found, or the wait limit passed. |
 
 A run `state` maps to an exit code: `passed` is `0`, `failed` is `1`, `error` and `cancelled` are `2`.
@@ -163,16 +164,16 @@ A run `state` maps to an exit code: `passed` is `0`, `failed` is `1`, `error` an
 The log, in this order:
 
 1. One first line with the client version, the run id, and the target.
-2. One line per suite, in sorted path order, with its passed, failed, and skipped counts (skipped is left out when it is zero), or its load failure.
-3. For each failed or skipped test, the suite path and the test name on one line, then the failure text indented by two spaces ([failure-text.md](failure-text.md)).
+2. One line per suite, in sorted path order, with its passed, failed, skipped, and cleanup failed counts (skipped and cleanup failed are left out when zero), or its load failure.
+3. For each failed or skipped test, the suite path and the test name on one line, then the failure text indented by two spaces ([failure-text.md](failure-text.md)). For each failed cleanup, the same with ` cleanup` after the test name.
 4. One last line with the run id and the totals.
 
 A rejected run request prints the runner's one-line reason, for example `run: target "http://10.0.0.5:8080" is not in the target list` ([targets.md](targets.md)), and exits `2`.
 
 The client also writes:
 
-- **The job summary.** A table with one row per suite (path, passed, failed, skipped) and a totals row, with the run id, to `$GITHUB_STEP_SUMMARY`. GitHub caps it at 1 MiB per step, so the client truncates and says so.
-- **Annotations.** One `::error file=<suite path>,line=<the test's line>::<test name>: <line one of the failure text>` per failed test, so the failure shows on the suite's line in the pull request. The test's line is the line of the test's mapping node in the YAML ([suite-format.md](suite-format.md)). A suite load failure gets `line=1` and no test name. A skipped test gets no annotation.
+- **The job summary.** A table with one row per suite (path, passed, failed, skipped, cleanup failed) and a totals row, with the run id, to `$GITHUB_STEP_SUMMARY`. GitHub caps it at 1 MiB per step, so the client truncates and says so.
+- **Annotations.** One `::error file=<suite path>,line=<the test's line>::<test name>: <line one of the failure text>` per failed test, so the failure shows on the suite's line in the pull request. The test's line is the line of the test's mapping node in the YAML ([suite-format.md](suite-format.md)). A suite load failure gets `line=1` and no test name. A skipped test gets no annotation. A failed cleanup gets one on its test's line, with the message `<test name> cleanup: <line one>`.
 
 ## The action and the client
 
@@ -202,5 +203,5 @@ A suite that fails at load does not reject the run. The run starts, that suite i
 ## Known limits
 
 - A fork's pull request cannot start a run. A product that takes outside contributions runs surface on `main` after the merge, or on a branch a maintainer pushes.
-- A run keeps running when the client stops polling without a cancel, for example when the job is killed. The runner's own run limit bounds it, and that limit is decided with the runner shape.
+- A run keeps running, cleanups included, when the client stops polling without a cancel, for example when the job is killed. The runner's own run limit bounds it, and that limit is decided with the runner shape.
 - The client trusts the `runner` URL it is given. A workflow that points at a wrong URL sends that URL a token with that URL as audience, and nothing else. The token names no secret and grants nothing at GitHub.

@@ -66,8 +66,9 @@ The `User-Agent` value above is a placeholder. The text the runner appends is no
 ## Where it shows
 
 - The `failure` field of a failed or skipped test in `GET /v1/runs/<id>` holds the text with no indent ([runs.md](runs.md)).
-- The CI log prints it under the line with the suite path and the test name, indented by two spaces.
-- The GitHub annotation of a failed test is the test name, `: `, and line one. A skipped test gets no annotation.
+- The `cleanup.failure` field of a test whose cleanup failed holds the cleanup's text in the same format: its request, its response, and the marks ([data-safety.md](data-safety.md)).
+- The CI log prints it under the line with the suite path and the test name, indented by two spaces. A failed cleanup prints under `<suite path> <test name> cleanup`, indented the same way.
+- The GitHub annotation of a failed test is the test name, `: `, and line one. A failed cleanup's annotation is the test name, ` cleanup: `, and line one. A skipped test gets no annotation.
 - The runner redacts secret values before it stores the text ([secrets.md](secrets.md)).
 - v1 keeps no other record of the request and the response. The run result holds the text and nothing more. The text holds what a reader needs to send the request again by hand, except the secret values.
 
@@ -137,13 +138,13 @@ no response: connection refused
 
 ## A skipped test
 
-- The rule for when a test is skipped is decided in [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10). This doc fixes only what a skipped test prints.
+- A test is skipped when a test in its `needs` failed or was skipped ([data-safety.md](data-safety.md)). This doc fixes only what a skipped test prints.
 - A skipped test has the state `skipped` and a failure text of one line: `skipped: needs create-user, which failed` or `skipped: needs update-user, which was skipped`.
 - The client prints it in the failures section, like a failed test, so a reader sees why the counts do not add up to the suite's test count.
 
 ## The counts
 
-- The suite line and the last line of the log count `passed`, `failed`, and `skipped`, in that order. `skipped` is left out when it is zero: `surface/api/users.yaml: 0 passed, 1 failed, 1 skipped` and `surface/api/search.yaml: 2 passed`.
+- The suite line and the last line of the log count `passed`, `failed`, `skipped`, and `cleanup failed`, in that order. `skipped` and `cleanup failed` are left out when zero: `surface/api/users.yaml: 0 passed, 1 failed, 1 skipped`, `surface/api/users.yaml: 3 passed, 1 cleanup failed`, and `surface/api/search.yaml: 2 passed`. The first three count tests. `cleanup failed` counts cleanups ([data-safety.md](data-safety.md)).
 - A passed test prints nothing.
 
 ## Decided elsewhere
@@ -151,5 +152,5 @@ no response: connection refused
 - Redaction of secret values: [secrets.md](secrets.md)
 - The log layout, the `failure` field, the job summary, and the annotations: [runs.md](runs.md)
 - The match modes and the path syntax: [suite-format.md](suite-format.md)
-- When a test is skipped, and what happens to the data a failed test created: [How do tests that change data run safely?](https://github.com/rajnandan1/surface/issues/10)
+- When a test is skipped, cleanup, and collisions between runs: [data-safety.md](data-safety.md)
 - The text the runner appends to `User-Agent`: the map's "Not yet specified"
