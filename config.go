@@ -3,13 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"go.yaml.in/yaml/v3"
 )
 
 type config struct {
 	url     string
-	targets []string
+	targets []target
 }
 
 func loadConfig(path string) (config, error) {
@@ -41,11 +42,12 @@ func loadConfig(path string) (config, error) {
 			if value.Kind != yaml.SequenceNode {
 				return c, fmt.Errorf("%s: line %d: targets must be a list", path, value.Line)
 			}
-			for _, target := range value.Content {
-				if target.ShortTag() != "!!str" || target.Value == "" {
-					return c, fmt.Errorf("%s: line %d: a target must be a string", path, target.Line)
+			for _, entry := range value.Content {
+				parsed, err := parseTargetEntry(entry)
+				if err != nil {
+					return c, fmt.Errorf("%s: %v", path, err)
 				}
-				c.targets = append(c.targets, target.Value)
+				c.targets = append(c.targets, parsed)
 			}
 		default:
 			return c, fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, key.Value)
@@ -58,4 +60,35 @@ func loadConfig(path string) (config, error) {
 		return c, fmt.Errorf("%s: targets is missing or empty", path)
 	}
 	return c, nil
+}
+
+func parseTargetEntry(entry *yaml.Node) (target, error) {
+	text := entry
+	if entry.Kind == yaml.MappingNode {
+		text = nil
+		for i := 0; i < len(entry.Content); i += 2 {
+			key, value := entry.Content[i], entry.Content[i+1]
+			switch key.Value {
+			case "url":
+				text = value
+			case "rate":
+				if rate, err := strconv.Atoi(value.Value); value.ShortTag() != "!!int" || err != nil || rate < 1 {
+					return target{}, fmt.Errorf("line %d: rate must be a whole number of 1 or more", value.Line)
+				}
+			default:
+				return target{}, fmt.Errorf("line %d: unknown key %q", key.Line, key.Value)
+			}
+		}
+		if text == nil {
+			return target{}, fmt.Errorf("line %d: a target entry has no url", entry.Line)
+		}
+	}
+	if text.ShortTag() != "!!str" {
+		return target{}, fmt.Errorf("line %d: a target must be a string, or a mapping with url and rate", text.Line)
+	}
+	parsed, err := parseTarget(text.Value)
+	if err != nil {
+		return target{}, fmt.Errorf("line %d: %v", text.Line, err)
+	}
+	return parsed, nil
 }

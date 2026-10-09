@@ -44,11 +44,12 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "surface serve: --config is missing")
 		return 2
 	}
-	if _, err := loadConfig(*configPath); err != nil {
+	config, err := loadConfig(*configPath)
+	if err != nil {
 		fmt.Fprintf(stderr, "surface serve: %v\n", err)
 		return 1
 	}
-	server := &http.Server{Addr: ":8080", Handler: newRunner(stdout), ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Addr: ":8080", Handler: newRunner(stdout, config.targets), ReadHeaderTimeout: 10 * time.Second}
 	fmt.Fprintf(stderr, "surface serve: %v\n", server.ListenAndServe())
 	return 1
 }
