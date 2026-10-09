@@ -79,10 +79,11 @@ func with(claims map[string]any, name string, value any) map[string]any {
 
 func newTestRunner(t *testing.T, issuer *fakeIssuer, logTo io.Writer, url string, targets ...string) http.Handler {
 	t.Helper()
-	runner, err := newRunner(logTo, config{url: url, targets: targetList(t, targets...), issuer: issuer.url, ownerIDs: []string{crustdataOwnerID}})
+	runner, err := newRunner(logTo, config{url: url, targets: targetList(t, targets...), issuer: issuer.url, ownerIDs: []string{crustdataOwnerID}, resultsDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(runner.active.Wait)
 	return runner
 }
 

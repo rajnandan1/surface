@@ -17,6 +17,9 @@ type config struct {
 	runTime  string
 	requests int
 	runs     int
+
+	resultsDir string
+	retention  string
 }
 
 func loadConfig(path string) (config, error) {
@@ -61,6 +64,10 @@ func loadConfig(path string) (config, error) {
 			}
 		case "limits":
 			if err := c.loadLimits(path, value); err != nil {
+				return c, err
+			}
+		case "results":
+			if err := c.loadResults(path, value); err != nil {
 				return c, err
 			}
 		default:
@@ -172,6 +179,30 @@ func (c *config) loadLimits(path string, node *yaml.Node) error {
 			}
 		default:
 			return fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, "limits."+key.Value)
+		}
+	}
+	return nil
+}
+
+func (c *config) loadResults(path string, node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: line %d: results must be a mapping", path, node.Line)
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "dir":
+			if value.ShortTag() != "!!str" || value.Value == "" {
+				return fmt.Errorf("%s: line %d: results.dir must be a path", path, value.Line)
+			}
+			c.resultsDir = value.Value
+		case "retention":
+			if retention, err := time.ParseDuration(value.Value); value.ShortTag() != "!!str" || err != nil || retention <= 0 {
+				return fmt.Errorf("%s: line %d: results.retention must be a duration above zero, such as 168h", path, value.Line)
+			}
+			c.retention = value.Value
+		default:
+			return fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, "results."+key.Value)
 		}
 	}
 	return nil

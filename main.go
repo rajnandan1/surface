@@ -61,6 +61,11 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "surface serve: %v\n", err)
 		return 1
 	}
+	go func() {
+		for range time.Tick(time.Hour) {
+			runner.sweep()
+		}
+	}()
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		fmt.Fprintf(stderr, "surface serve: %v\n", err)

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"strings"
 	"time"
 )
 
@@ -21,4 +22,15 @@ func newRunID(now time.Time) string {
 		hi >>= 5
 	}
 	return string(id[:])
+}
+
+func runIDTime(id string) (time.Time, bool) {
+	if len(id) != 26 || strings.Trim(id, crockford) != "" {
+		return time.Time{}, false
+	}
+	var ms int64
+	for _, c := range id[:10] {
+		ms = ms<<5 | int64(strings.IndexRune(crockford, c))
+	}
+	return time.UnixMilli(ms), true
 }

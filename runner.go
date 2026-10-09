@@ -68,7 +68,7 @@ type runner struct {
 	runs     map[string]*runResult
 	stopping bool
 	active   sync.WaitGroup
-	running  int
+	writing  sync.Mutex
 	pool     chan struct{}
 	rates    map[target]*rateLimit
 }
@@ -80,6 +80,7 @@ type rateLimit struct {
 }
 
 func newRunner(logTo io.Writer, c config) (*runner, error) {
+	c.resultsDir = cmp.Or(c.resultsDir, "/var/lib/surface/results")
 	provider, err := oidc.NewProvider(oidc.ClientContext(context.Background(), &http.Client{Timeout: 30 * time.Second}), c.issuer)
 	if err != nil {
 		return nil, fmt.Errorf("github.issuer: %v", err)
@@ -110,6 +111,8 @@ func newRunner(logTo io.Writer, c config) (*runner, error) {
 		}
 	})
 	r.Handler = mux
+	r.markInterrupted()
+	r.sweep()
 	return r, nil
 }
 
@@ -157,16 +160,16 @@ func (r *runner) start(w http.ResponseWriter, req *http.Request, c caller) {
 		http.Error(w, "run: runner is stopping", http.StatusServiceUnavailable)
 		return
 	}
-	if maxRuns := cmp.Or(r.config.runs, 32); r.running >= maxRuns {
+	if maxRuns := cmp.Or(r.config.runs, 32); len(r.runs) >= maxRuns {
 		r.mu.Unlock()
 		w.Header().Set("Retry-After", "5")
 		http.Error(w, fmt.Sprintf("run: the runner holds as many runs as its cap of %d allows", maxRuns), http.StatusServiceUnavailable)
 		return
 	}
 	r.runs[run.ID] = run
-	r.running++
 	r.active.Add(1)
 	r.mu.Unlock()
+	r.save(run)
 	time.AfterFunc(limit, func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -206,6 +209,9 @@ func (r *runner) cancel(w http.ResponseWriter, req *http.Request, c caller) {
 func (r *runner) lookup(w http.ResponseWriter, id string, c caller, action string) *runResult {
 	run, ok := r.runs[id]
 	if !ok {
+		run = r.load(id)
+	}
+	if run == nil {
 		http.Error(w, fmt.Sprintf("run: run %q is not known", id), http.StatusNotFound)
 		return nil
 	}
@@ -284,7 +290,6 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 	wg.Wait()
 
 	r.mu.Lock()
-	r.running--
 	run.State = "passed"
 	for _, suite := range run.Suites {
 		if suite.State == "failed" {
@@ -297,11 +302,17 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 	line := cmp.Or(run.Reason, countTests(run.Suites...).String())
 	r.mu.Unlock()
 	r.log.Printf("run %s %s: %s", run.ID, run.State, line)
+	if r.save(run) == nil {
+		r.mu.Lock()
+		delete(r.runs, run.ID)
+		r.mu.Unlock()
+	}
 }
 
 var skipReason = map[string]string{"failed": "failed", "skipped": "was skipped"}
 
 func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
+	defer r.save(run)
 	s, err := loadSuite(result.Path, text)
 	r.mu.Lock()
 	if err != nil {

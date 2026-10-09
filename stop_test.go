@@ -86,10 +86,11 @@ func (target *slowTarget) requests() []string {
 
 func limitedRunner(t *testing.T, issuer *fakeIssuer, url, runTime string, targets ...string) *runner {
 	t.Helper()
-	runner, err := newRunner(io.Discard, config{url: url, targets: targetList(t, targets...), issuer: issuer.url, ownerIDs: []string{crustdataOwnerID}, runTime: runTime})
+	runner, err := newRunner(io.Discard, config{url: url, targets: targetList(t, targets...), issuer: issuer.url, ownerIDs: []string{crustdataOwnerID}, runTime: runTime, resultsDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(runner.active.Wait)
 	return runner
 }
 
