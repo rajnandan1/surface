@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,18 +28,8 @@ tests:
       status: 200
 `
 
-func TestRunPrintsTheResultAndExits1WhenATestFails(t *testing.T) {
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL)))
-	defer runner.Close()
-	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
-	pollInterval = 10 * time.Millisecond
-
+func inRepoWithASuite(t *testing.T) {
+	t.Helper()
 	t.Chdir(t.TempDir())
 	if err := os.MkdirAll("surface/api", 0o755); err != nil {
 		t.Fatal(err)
@@ -48,6 +37,22 @@ func TestRunPrintsTheResultAndExits1WhenATestFails(t *testing.T) {
 	if err := os.WriteFile("surface/api/users.yaml", []byte(usersSuite), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRunPrintsTheResultAndExits1WhenATestFails(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer target.Close()
+	issuer := newFakeIssuer(t)
+	fakeGitHubJob(t, func(audience string) string { return issuer.sign(issuer.claims(audience)) })
+	runner := startRunner(t, issuer, target.URL)
+	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
+	pollInterval = 10 * time.Millisecond
+
+	inRepoWithASuite(t)
 
 	var stdout, stderr bytes.Buffer
 	code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "--timeout", "1m", "surface/"}, &stdout, &stderr)
@@ -73,8 +78,9 @@ run <id>: 1 passed, 1 failed
 func TestRunWithABrokenSuiteStillRunsTheValidSuite(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, target.URL)))
-	defer runner.Close()
+	issuer := newFakeIssuer(t)
+	fakeGitHubJob(t, func(audience string) string { return issuer.sign(issuer.claims(audience)) })
+	runner := startRunner(t, issuer, target.URL)
 	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
 	pollInterval = 10 * time.Millisecond
 
@@ -115,13 +121,12 @@ func TestRunWithATargetNotInTheTargetListSendsNoRequest(t *testing.T) {
 	var requests atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
 	defer target.Close()
-	runner := httptest.NewServer(newRunner(io.Discard, targetList(t, "https://api.crustdata.com")))
-	defer runner.Close()
+	issuer := newFakeIssuer(t)
+	fakeGitHubJob(t, func(audience string) string { return issuer.sign(issuer.claims(audience)) })
+	runner := startRunner(t, issuer, "https://api.crustdata.com")
 	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
 	pollInterval = 10 * time.Millisecond
-
-	t.Chdir(t.TempDir())
-	writeSuite(t, "surface/api/users.yaml", usersSuite)
+	inRepoWithASuite(t)
 
 	var stdout, stderr bytes.Buffer
 	code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "--timeout", "1m", "surface/"}, &stdout, &stderr)
@@ -151,5 +156,79 @@ func TestRunWithNoSuitesExits2(t *testing.T) {
 	}
 	if want := "surface run: no suites under surface/\n"; stderr.String() != want {
 		t.Fatalf("stderr is %q, want %q", stderr.String(), want)
+	}
+}
+
+func TestRunOutsideGitHubActionsExits2(t *testing.T) {
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+	inRepoWithASuite(t)
+
+	var stdout, stderr bytes.Buffer
+	code := cli([]string{"run", "--runner", "http://127.0.0.1:1", "--target", "http://127.0.0.1:1", "surface/"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("exit code is %d, want 2", code)
+	}
+	if want := "surface run: no OIDC token: not inside GitHub Actions, or the job is missing permissions: id-token: write\n"; stderr.String() != want {
+		t.Fatalf("stderr is %q, want %q", stderr.String(), want)
+	}
+}
+
+func TestRunSendsTheRunnerURLWithoutItsTrailingSlashAsTheAudience(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer target.Close()
+	issuer := newFakeIssuer(t)
+	fakeGitHubJob(t, func(audience string) string { return issuer.sign(issuer.claims(audience)) })
+	runner := startRunner(t, issuer, target.URL)
+	defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
+	pollInterval = 10 * time.Millisecond
+	inRepoWithASuite(t)
+
+	var stdout, stderr bytes.Buffer
+	code := cli([]string{"run", "--runner", runner.URL + "/", "--target", target.URL, "surface/"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code is %d, want 0\nstdout:\n%s\nstderr:\n%s", code, &stdout, &stderr)
+	}
+}
+
+func TestRunFetchesAFreshTokenOnceAfterA401(t *testing.T) {
+	tests := []struct {
+		name    string
+		expired func(fetch int32) bool
+		code    int
+	}{
+		{"the first token expired", func(fetch int32) bool { return fetch == 1 }, 0},
+		{"every token expired", func(int32) bool { return true }, 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			defer target.Close()
+			issuer := newFakeIssuer(t)
+			var fetches atomic.Int32
+			fakeGitHubJob(t, func(audience string) string {
+				claims := issuer.claims(audience)
+				if test.expired(fetches.Add(1)) {
+					claims["exp"] = time.Now().Add(-5 * time.Minute).Unix()
+				}
+				return issuer.sign(claims)
+			})
+			runner := startRunner(t, issuer, target.URL)
+			defer func(interval time.Duration) { pollInterval = interval }(pollInterval)
+			pollInterval = 10 * time.Millisecond
+			inRepoWithASuite(t)
+
+			var stdout, stderr bytes.Buffer
+			code := cli([]string{"run", "--runner", runner.URL, "--target", target.URL, "surface/"}, &stdout, &stderr)
+
+			if code != test.code {
+				t.Fatalf("exit code is %d, want %d\nstdout:\n%s\nstderr:\n%s", code, test.code, &stdout, &stderr)
+			}
+			if fetches.Load() != 2 {
+				t.Fatalf("the client fetched %d tokens, want 2", fetches.Load())
+			}
+		})
 	}
 }

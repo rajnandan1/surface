@@ -9,12 +9,14 @@ import (
 )
 
 type config struct {
-	url     string
-	targets []target
+	url      string
+	targets  []target
+	issuer   string
+	ownerIDs []string
 }
 
 func loadConfig(path string) (config, error) {
-	var c config
+	c := config{issuer: "https://token.actions.githubusercontent.com"}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return c, err
@@ -49,6 +51,10 @@ func loadConfig(path string) (config, error) {
 				}
 				c.targets = append(c.targets, parsed)
 			}
+		case "github":
+			if err := c.loadGitHub(path, value); err != nil {
+				return c, err
+			}
 		default:
 			return c, fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, key.Value)
 		}
@@ -58,6 +64,9 @@ func loadConfig(path string) (config, error) {
 	}
 	if len(c.targets) == 0 {
 		return c, fmt.Errorf("%s: targets is missing or empty", path)
+	}
+	if len(c.ownerIDs) == 0 {
+		return c, fmt.Errorf("%s: github.owner_ids is missing or empty", path)
 	}
 	return c, nil
 }
@@ -91,4 +100,34 @@ func parseTargetEntry(entry *yaml.Node) (target, error) {
 		return target{}, fmt.Errorf("line %d: %v", text.Line, err)
 	}
 	return parsed, nil
+}
+
+func (c *config) loadGitHub(path string, node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: line %d: github must be a mapping", path, node.Line)
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "issuer":
+			if value.ShortTag() != "!!str" {
+				return fmt.Errorf("%s: line %d: github.issuer must be a string", path, value.Line)
+			}
+			c.issuer = value.Value
+		case "owner_ids":
+			if value.Kind != yaml.SequenceNode {
+				return fmt.Errorf("%s: line %d: github.owner_ids must be a list", path, value.Line)
+			}
+			for _, entry := range value.Content {
+				var id int64
+				if entry.ShortTag() != "!!int" || entry.Decode(&id) != nil || id < 1 {
+					return fmt.Errorf("%s: line %d: an owner id must be a whole number of 1 or more", path, entry.Line)
+				}
+				c.ownerIDs = append(c.ownerIDs, strconv.FormatInt(id, 10))
+			}
+		default:
+			return fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, "github."+key.Value)
+		}
+	}
+	return nil
 }
