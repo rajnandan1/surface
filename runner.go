@@ -37,6 +37,7 @@ type runResult struct {
 
 	stopState, stopReason string
 	cleanupDeadline       time.Time
+	rate                  *rateLimit
 }
 
 type suiteResult struct {
@@ -67,6 +68,15 @@ type runner struct {
 	runs     map[string]*runResult
 	stopping bool
 	active   sync.WaitGroup
+	running  int
+	pool     chan struct{}
+	rates    map[target]*rateLimit
+}
+
+type rateLimit struct {
+	mu    sync.Mutex
+	every time.Duration
+	next  time.Time
 }
 
 func newRunner(logTo io.Writer, c config) (*runner, error) {
@@ -84,7 +94,9 @@ func newRunner(logTo io.Writer, c config) (*runner, error) {
 			// go-oidc has no clock skew for exp, so its clock runs behind by the skew.
 			Now: func() time.Time { return time.Now().Add(-clockSkew) },
 		}),
-		runs: map[string]*runResult{},
+		runs:  map[string]*runResult{},
+		pool:  make(chan struct{}, cmp.Or(c.requests, 128)),
+		rates: map[target]*rateLimit{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", r.authorized(r.start))
@@ -134,7 +146,7 @@ func (r *runner) start(w http.ResponseWriter, req *http.Request, c caller) {
 
 	runTime := cmp.Or(r.config.runTime, "30m")
 	limit, _ := time.ParseDuration(runTime)
-	run := &runResult{ID: newRunID(time.Now()), State: "running", Caller: c, Target: request.Target, cleanupDeadline: time.Now().Add(limit + cleanupWindow)}
+	run := &runResult{ID: newRunID(time.Now()), State: "running", Caller: c, Target: request.Target, cleanupDeadline: time.Now().Add(limit + cleanupWindow), rate: r.rateLimitFor(parsed)}
 	for _, path := range slices.Sorted(maps.Keys(request.Suites)) {
 		run.Suites = append(run.Suites, &suiteResult{Path: path, State: "pending"})
 	}
@@ -145,7 +157,14 @@ func (r *runner) start(w http.ResponseWriter, req *http.Request, c caller) {
 		http.Error(w, "run: runner is stopping", http.StatusServiceUnavailable)
 		return
 	}
+	if maxRuns := cmp.Or(r.config.runs, 32); r.running >= maxRuns {
+		r.mu.Unlock()
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, fmt.Sprintf("run: the runner holds as many runs as its cap of %d allows", maxRuns), http.StatusServiceUnavailable)
+		return
+	}
 	r.runs[run.ID] = run
+	r.running++
 	r.active.Add(1)
 	r.mu.Unlock()
 	time.AfterFunc(limit, func() {
@@ -214,6 +233,38 @@ func testsRunning(run *runResult) bool {
 	return false
 }
 
+func (r *runner) rateLimitFor(t target) *rateLimit {
+	lowest := 0
+	for _, entry := range r.config.targets {
+		if entry.rate > 0 && entry.matches(t) && (lowest == 0 || entry.rate < lowest) {
+			lowest = entry.rate
+		}
+	}
+	if lowest == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rates[t] == nil {
+		r.rates[t] = &rateLimit{every: time.Second / time.Duration(lowest)}
+	}
+	return r.rates[t]
+}
+
+func (l *rateLimit) wait() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	turn := time.Now()
+	if turn.Before(l.next) {
+		turn = l.next
+	}
+	l.next = turn.Add(l.every)
+	l.mu.Unlock()
+	time.Sleep(time.Until(turn))
+}
+
 func (r *runner) shutdown() {
 	r.mu.Lock()
 	r.stopping = true
@@ -233,6 +284,7 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 	wg.Wait()
 
 	r.mu.Lock()
+	r.running--
 	run.State = "passed"
 	for _, suite := range run.Suites {
 		if suite.State == "failed" {
@@ -304,7 +356,7 @@ func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
 				return
 			}
 			var statusPassed bool
-			saved[i], statusPassed = r.runTest(run.ID, run.Target, s.Defaults, t, vars(t.Needs...), entries[i])
+			saved[i], statusPassed = r.runTest(run, s.Defaults, t, vars(t.Needs...), entries[i])
 			if statusPassed && t.Cleanup != nil {
 				r.mu.Lock()
 				created = append(created, i)
@@ -327,7 +379,12 @@ func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
 		case err != nil:
 			cleanup.Failure = "not sent: " + err.Error()
 		default:
-			cleanup.Failure, _, _ = sendAndCheck(run.ID, request, s.Defaults, test{request: *t.Cleanup})
+			release := r.turn(run)
+			cleanup.Failure = "not sent: run time limit passed"
+			if time.Now().Before(run.cleanupDeadline) {
+				cleanup.Failure, _, _ = sendAndCheck(run.ID, request, s.Defaults, test{request: *t.Cleanup})
+			}
+			release()
 		}
 		if cleanup.Failure != "" {
 			cleanup.State = "failed"
@@ -345,12 +402,21 @@ func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
 	r.mu.Unlock()
 }
 
-func (r *runner) runTest(runID, target string, d defaults, t test, vars map[string]json.RawMessage, result *testResult) (map[string]json.RawMessage, bool) {
+func (r *runner) runTest(run *runResult, d defaults, t test, vars map[string]json.RawMessage, result *testResult) (map[string]json.RawMessage, bool) {
 	failure, saved, statusPassed := "", map[string]json.RawMessage(nil), false
-	if request, err := newRequest(target, d, t.request, vars); err != nil {
+	if request, err := newRequest(run.Target, d, t.request, vars); err != nil {
 		failure = "not sent: " + err.Error()
 	} else {
-		failure, saved, statusPassed = sendAndCheck(runID, request, d, t)
+		release := r.turn(run)
+		defer release()
+		r.mu.Lock()
+		if run.stopState != "" {
+			result.State = "pending"
+			r.mu.Unlock()
+			return nil, false
+		}
+		r.mu.Unlock()
+		failure, saved, statusPassed = sendAndCheck(run.ID, request, d, t)
 	}
 
 	r.mu.Lock()
@@ -360,6 +426,13 @@ func (r *runner) runTest(runID, target string, d defaults, t test, vars map[stri
 	}
 	r.mu.Unlock()
 	return saved, statusPassed
+}
+
+func (r *runner) turn(run *runResult) (release func()) {
+	run.rate.wait()
+	// The Go runtime wakes blocked channel senders in the order they blocked, so pool slots go out in the order asked.
+	r.pool <- struct{}{}
+	return func() { <-r.pool }
 }
 
 func sendAndCheck(runID string, request *http.Request, d defaults, t test) (failure string, saved map[string]json.RawMessage, statusPassed bool) {

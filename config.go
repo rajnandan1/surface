@@ -15,6 +15,8 @@ type config struct {
 	issuer   string
 	ownerIDs []string
 	runTime  string
+	requests int
+	runs     int
 }
 
 func loadConfig(path string) (config, error) {
@@ -78,7 +80,7 @@ func loadConfig(path string) (config, error) {
 }
 
 func parseTargetEntry(entry *yaml.Node) (target, error) {
-	text := entry
+	text, rate := entry, 0
 	if entry.Kind == yaml.MappingNode {
 		text = nil
 		for i := 0; i < len(entry.Content); i += 2 {
@@ -87,9 +89,11 @@ func parseTargetEntry(entry *yaml.Node) (target, error) {
 			case "url":
 				text = value
 			case "rate":
-				if rate, err := strconv.Atoi(value.Value); value.ShortTag() != "!!int" || err != nil || rate < 1 {
+				n, ok := wholeNumber(value)
+				if !ok {
 					return target{}, fmt.Errorf("line %d: rate must be a whole number of 1 or more", value.Line)
 				}
+				rate = n
 			default:
 				return target{}, fmt.Errorf("line %d: unknown key %q", key.Line, key.Value)
 			}
@@ -105,7 +109,13 @@ func parseTargetEntry(entry *yaml.Node) (target, error) {
 	if err != nil {
 		return target{}, fmt.Errorf("line %d: %v", text.Line, err)
 	}
+	parsed.rate = rate
 	return parsed, nil
+}
+
+func wholeNumber(node *yaml.Node) (int, bool) {
+	n, err := strconv.Atoi(node.Value)
+	return n, node.ShortTag() == "!!int" && err == nil && n >= 1
 }
 
 func (c *config) loadGitHub(path string, node *yaml.Node) error {
@@ -150,6 +160,16 @@ func (c *config) loadLimits(path string, node *yaml.Node) error {
 				return fmt.Errorf("%s: line %d: limits.run_time must be a duration above zero, such as 30m", path, value.Line)
 			}
 			c.runTime = value.Value
+		case "requests", "runs":
+			n, ok := wholeNumber(value)
+			if !ok {
+				return fmt.Errorf("%s: line %d: limits.%s must be a whole number of 1 or more", path, value.Line, key.Value)
+			}
+			if key.Value == "requests" {
+				c.requests = n
+			} else {
+				c.runs = n
+			}
 		default:
 			return fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, "limits."+key.Value)
 		}

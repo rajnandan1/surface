@@ -67,7 +67,8 @@ func TestConfigReadsTargetStringsAndMappings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := targetList(t, "https://*.preview.crustdata.com", "https://staging.crustdata.com:443"); !slices.Equal(c.targets, want) {
+	want := []target{targetList(t, "https://*.preview.crustdata.com")[0], rated(t, "https://staging.crustdata.com:443", 20)}
+	if !slices.Equal(c.targets, want) {
 		t.Fatalf("targets are %v, want %v", c.targets, want)
 	}
 }
@@ -129,6 +130,39 @@ func TestConfigReadsTheRunTimeLimit(t *testing.T) {
 		}
 		if got != c.error || config.runTime != c.runTime && c.error == "" {
 			t.Errorf("%q: run time %q, error %q, want %q and %q", c.limits, config.runTime, got, c.runTime, c.error)
+		}
+	}
+}
+
+func TestConfigReadsThePoolAndTheCapOnRuns(t *testing.T) {
+	base := "url: https://surface.example.com\ntargets:\n  - https://api.example.com\ngithub:\n  owner_ids:\n    - 63745551\n"
+	cases := []struct {
+		limits         string
+		requests, runs int
+		error          string
+	}{
+		{"", 0, 0, ""},
+		{"limits:\n  requests: 2\n  runs: 1\n", 2, 1, ""},
+		{"limits:\n  requests: 0\n", 0, 0, "line 8: limits.requests must be a whole number of 1 or more"},
+		{"limits:\n  requests: -4\n", 0, 0, "line 8: limits.requests must be a whole number of 1 or more"},
+		{"limits:\n  runs: 2.5\n", 0, 0, "line 8: limits.runs must be a whole number of 1 or more"},
+		{"limits:\n  runs: many\n", 0, 0, "line 8: limits.runs must be a whole number of 1 or more"},
+		{"limits:\n  runs: \"4\"\n", 0, 0, "line 8: limits.runs must be a whole number of 1 or more"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(base+c.limits), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := loadConfig(path)
+
+		got := ""
+		if err != nil {
+			got = strings.TrimPrefix(err.Error(), path+": ")
+		}
+		if got != c.error || c.error == "" && (config.requests != c.requests || config.runs != c.runs) {
+			t.Errorf("%q: requests %d, runs %d, error %q, want %d, %d, and %q", c.limits, config.requests, config.runs, got, c.requests, c.runs, c.error)
 		}
 	}
 }

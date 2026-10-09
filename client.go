@@ -179,6 +179,16 @@ func (runner *runnerAPI) start(ctx context.Context, request runRequest) (string,
 		return "", err
 	}
 	response, err := runner.send(ctx, http.MethodPost, "/v1/runs", body)
+	for err == nil && response.StatusCode == http.StatusServiceUnavailable {
+		full := runnerLine(response)
+		response.Body.Close()
+		select {
+		case <-ctx.Done():
+			return "", full
+		case <-time.After(pollInterval):
+		}
+		response, err = runner.send(ctx, http.MethodPost, "/v1/runs", body)
+	}
 	if err != nil {
 		return "", err
 	}

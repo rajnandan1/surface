@@ -10,6 +10,7 @@ import (
 
 type target struct {
 	scheme, host, port string
+	rate               int
 }
 
 func parseTarget(text string) (target, error) {
