@@ -20,22 +20,32 @@ func runOneSuite(t *testing.T, target, suite string) runResult {
 	issuer := newFakeIssuer(t)
 	runner := newTestRunner(t, issuer, io.Discard, runnerURL, target)
 	token := issuer.sign(issuer.claims(runnerURL))
+	return waitForRun(t, runner, token, startRun(t, runner, token, target, suite))
+}
+
+func startRun(t *testing.T, runner http.Handler, token, target, suite string) string {
+	t.Helper()
 	request, _ := json.Marshal(runRequest{Target: target, Suites: map[string]string{"surface/api/users.yaml": suite}})
 	accepted := call(runner, http.MethodPost, "/v1/runs", token, bytes.NewReader(request))
 	var run struct{ ID string }
 	if err := json.Unmarshal(accepted.Body.Bytes(), &run); err != nil {
 		t.Fatalf("status %d, body %q: %v", accepted.Code, accepted.Body, err)
 	}
+	return run.ID
+}
+
+func waitForRun(t *testing.T, runner http.Handler, token, id string) runResult {
+	t.Helper()
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		var result runResult
-		if err := json.Unmarshal(call(runner, http.MethodGet, "/v1/runs/"+run.ID, token, nil).Body.Bytes(), &result); err != nil {
+		if err := json.Unmarshal(call(runner, http.MethodGet, "/v1/runs/"+id, token, nil).Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		if result.State != "running" {
+		if isFinal(result.State) {
 			return result
 		}
 	}
-	t.Fatalf("run %s did not end within 10s", run.ID)
+	t.Fatalf("run %s did not end within 10s", id)
 	return runResult{}
 }
 

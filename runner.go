@@ -20,6 +20,8 @@ import (
 
 const maxRunRequest = 16 << 20
 
+var cleanupWindow = 10 * time.Minute
+
 type runRequest struct {
 	Target string            `json:"target"`
 	Suites map[string]string `json:"suites"`
@@ -28,9 +30,13 @@ type runRequest struct {
 type runResult struct {
 	ID     string         `json:"id"`
 	State  string         `json:"state"`
+	Reason string         `json:"reason,omitempty"`
 	Caller caller         `json:"caller"`
 	Target string         `json:"target"`
 	Suites []*suiteResult `json:"suites"`
+
+	stopState, stopReason string
+	cleanupDeadline       time.Time
 }
 
 type suiteResult struct {
@@ -53,14 +59,17 @@ type cleanupResult struct {
 }
 
 type runner struct {
+	http.Handler
 	log      *log.Logger
 	config   config
 	verifier *oidc.IDTokenVerifier
 	mu       sync.Mutex
 	runs     map[string]*runResult
+	stopping bool
+	active   sync.WaitGroup
 }
 
-func newRunner(logTo io.Writer, c config) (http.Handler, error) {
+func newRunner(logTo io.Writer, c config) (*runner, error) {
 	provider, err := oidc.NewProvider(oidc.ClientContext(context.Background(), &http.Client{Timeout: 30 * time.Second}), c.issuer)
 	if err != nil {
 		return nil, fmt.Errorf("github.issuer: %v", err)
@@ -80,8 +89,16 @@ func newRunner(logTo io.Writer, c config) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", r.authorized(r.start))
 	mux.HandleFunc("GET /v1/runs/{id}", r.authorized(r.get))
-	mux.HandleFunc("GET /healthz", func(http.ResponseWriter, *http.Request) {})
-	return mux, nil
+	mux.HandleFunc("POST /v1/runs/{id}/cancel", r.authorized(r.cancel))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.stopping {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	})
+	r.Handler = mux
+	return r, nil
 }
 
 func (r *runner) start(w http.ResponseWriter, req *http.Request, c caller) {
@@ -115,13 +132,29 @@ func (r *runner) start(w http.ResponseWriter, req *http.Request, c caller) {
 		return
 	}
 
-	run := &runResult{ID: newRunID(time.Now()), State: "running", Caller: c, Target: request.Target}
+	runTime := cmp.Or(r.config.runTime, "30m")
+	limit, _ := time.ParseDuration(runTime)
+	run := &runResult{ID: newRunID(time.Now()), State: "running", Caller: c, Target: request.Target, cleanupDeadline: time.Now().Add(limit + cleanupWindow)}
 	for _, path := range slices.Sorted(maps.Keys(request.Suites)) {
 		run.Suites = append(run.Suites, &suiteResult{Path: path, State: "pending"})
 	}
 	r.mu.Lock()
+	if r.stopping {
+		r.mu.Unlock()
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "run: runner is stopping", http.StatusServiceUnavailable)
+		return
+	}
 	r.runs[run.ID] = run
+	r.active.Add(1)
 	r.mu.Unlock()
+	time.AfterFunc(limit, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if testsRunning(run) {
+			r.stop(run, "error", "run time limit of "+runTime+" passed")
+		}
+	})
 	r.log.Printf("run %s accepted repo %s ref %s target %s", run.ID, c.Repo, c.Ref, run.Target)
 	go r.execute(run, request.Suites)
 
@@ -131,27 +164,71 @@ func (r *runner) start(w http.ResponseWriter, req *http.Request, c caller) {
 }
 
 func (r *runner) get(w http.ResponseWriter, req *http.Request, c caller) {
-	id := req.PathValue("id")
 	r.mu.Lock()
-	run, ok := r.runs[id]
+	run := r.lookup(w, req.PathValue("id"), c, "read")
 	body, _ := json.Marshal(run)
 	r.mu.Unlock()
+	if run != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	}
+}
+
+func (r *runner) cancel(w http.ResponseWriter, req *http.Request, c caller) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if run := r.lookup(w, req.PathValue("id"), c, "cancel"); run != nil {
+		r.stop(run, "cancelled", "")
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
+// lookup returns the run when caller c may read or cancel it, and answers the request itself when not. The caller holds r.mu.
+func (r *runner) lookup(w http.ResponseWriter, id string, c caller, action string) *runResult {
+	run, ok := r.runs[id]
 	if !ok {
 		http.Error(w, fmt.Sprintf("run: run %q is not known", id), http.StatusNotFound)
-		return
+		return nil
 	}
 	if run.Caller.Repo != c.Repo {
-		http.Error(w, fmt.Sprintf("run: repo %q may not read run %s", c.Repo, id), http.StatusForbidden)
+		http.Error(w, fmt.Sprintf("run: repo %q may not %s run %s", c.Repo, action, id), http.StatusForbidden)
+		return nil
+	}
+	return run
+}
+
+// stop makes run start no new test and sets the state it ends in. The caller holds r.mu.
+func (r *runner) stop(run *runResult, state, reason string) {
+	if run.stopState != "" || isFinal(run.State) {
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(body)
+	run.stopState, run.stopReason = state, reason
+}
+
+func testsRunning(run *runResult) bool {
+	for _, suite := range run.Suites {
+		if suite.State == "pending" || slices.ContainsFunc(suite.Tests, func(t *testResult) bool { return t.State == "pending" || t.State == "running" }) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *runner) shutdown() {
+	r.mu.Lock()
+	r.stopping = true
+	for _, run := range r.runs {
+		r.stop(run, "error", "runner stopped")
+	}
+	r.mu.Unlock()
+	r.active.Wait()
 }
 
 func (r *runner) execute(run *runResult, texts map[string]string) {
+	defer r.active.Done()
 	var wg sync.WaitGroup
 	for _, suite := range run.Suites {
-		wg.Go(func() { r.runSuite(run.ID, run.Target, suite, texts[suite.Path]) })
+		wg.Go(func() { r.runSuite(run, suite, texts[suite.Path]) })
 	}
 	wg.Wait()
 
@@ -162,14 +239,17 @@ func (r *runner) execute(run *runResult, texts map[string]string) {
 			run.State = "failed"
 		}
 	}
-	total := countTests(run.Suites...)
+	if run.stopState != "" {
+		run.State, run.Reason = run.stopState, run.stopReason
+	}
+	line := cmp.Or(run.Reason, countTests(run.Suites...).String())
 	r.mu.Unlock()
-	r.log.Printf("run %s %s: %s", run.ID, run.State, total)
+	r.log.Printf("run %s %s: %s", run.ID, run.State, line)
 }
 
 var skipReason = map[string]string{"failed": "failed", "skipped": "was skipped"}
 
-func (r *runner) runSuite(runID, target string, result *suiteResult, text string) {
+func (r *runner) runSuite(run *runResult, result *suiteResult, text string) {
 	s, err := loadSuite(result.Path, text)
 	r.mu.Lock()
 	if err != nil {
@@ -190,7 +270,7 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 	for i, t := range s.Tests {
 		index[t.Name], ended[i] = i, make(chan struct{})
 	}
-	runIDJSON, _ := json.Marshal(runID)
+	runIDJSON, _ := json.Marshal(run.ID)
 	vars := func(names ...string) map[string]json.RawMessage {
 		vars := map[string]json.RawMessage{"run.id": runIDJSON}
 		for _, name := range names {
@@ -215,13 +295,16 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 					break
 				}
 			}
-			skipped := entries[i].State == "skipped"
+			start := entries[i].State == "pending" && run.stopState == ""
+			if start {
+				entries[i].State = "running"
+			}
 			r.mu.Unlock()
-			if skipped {
+			if !start {
 				return
 			}
 			var statusPassed bool
-			saved[i], statusPassed = r.runTest(runID, target, s.Defaults, t, vars(t.Needs...), entries[i])
+			saved[i], statusPassed = r.runTest(run.ID, run.Target, s.Defaults, t, vars(t.Needs...), entries[i])
 			if statusPassed && t.Cleanup != nil {
 				r.mu.Lock()
 				created = append(created, i)
@@ -233,15 +316,18 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 
 	for _, i := range slices.Backward(created) {
 		t := s.Tests[i]
-		request, err := newRequest(target, s.Defaults, *t.Cleanup, vars(append(slices.Clone(t.Needs), t.Name)...))
+		request, err := newRequest(run.Target, s.Defaults, *t.Cleanup, vars(append(slices.Clone(t.Needs), t.Name)...))
 		if errors.Is(err, errNoValue) {
 			continue
 		}
 		cleanup := &cleanupResult{State: "passed"}
-		if err != nil {
+		switch {
+		case time.Now().After(run.cleanupDeadline):
+			cleanup.Failure = "not sent: run time limit passed"
+		case err != nil:
 			cleanup.Failure = "not sent: " + err.Error()
-		} else {
-			cleanup.Failure, _, _ = sendAndCheck(runID, request, s.Defaults, test{request: *t.Cleanup})
+		default:
+			cleanup.Failure, _, _ = sendAndCheck(run.ID, request, s.Defaults, test{request: *t.Cleanup})
 		}
 		if cleanup.Failure != "" {
 			cleanup.State = "failed"
@@ -252,18 +338,14 @@ func (r *runner) runSuite(runID, target string, result *suiteResult, text string
 	}
 
 	r.mu.Lock()
-	result.State = "passed"
-	if c := countTests(result); c.failed > 0 || c.cleanupFailed > 0 {
-		result.State = "failed"
+	result.State = "failed"
+	if c := countTests(result); c.passed == len(result.Tests) && c.cleanupFailed == 0 {
+		result.State = "passed"
 	}
 	r.mu.Unlock()
 }
 
 func (r *runner) runTest(runID, target string, d defaults, t test, vars map[string]json.RawMessage, result *testResult) (map[string]json.RawMessage, bool) {
-	r.mu.Lock()
-	result.State = "running"
-	r.mu.Unlock()
-
 	failure, saved, statusPassed := "", map[string]json.RawMessage(nil), false
 	if request, err := newRequest(target, d, t.request, vars); err != nil {
 		failure = "not sent: " + err.Error()

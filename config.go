@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -13,6 +14,7 @@ type config struct {
 	targets  []target
 	issuer   string
 	ownerIDs []string
+	runTime  string
 }
 
 func loadConfig(path string) (config, error) {
@@ -53,6 +55,10 @@ func loadConfig(path string) (config, error) {
 			}
 		case "github":
 			if err := c.loadGitHub(path, value); err != nil {
+				return c, err
+			}
+		case "limits":
+			if err := c.loadLimits(path, value); err != nil {
 				return c, err
 			}
 		default:
@@ -127,6 +133,25 @@ func (c *config) loadGitHub(path string, node *yaml.Node) error {
 			}
 		default:
 			return fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, "github."+key.Value)
+		}
+	}
+	return nil
+}
+
+func (c *config) loadLimits(path string, node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: line %d: limits must be a mapping", path, node.Line)
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "run_time":
+			if limit, err := time.ParseDuration(value.Value); value.ShortTag() != "!!str" || err != nil || limit <= 0 {
+				return fmt.Errorf("%s: line %d: limits.run_time must be a duration above zero, such as 30m", path, value.Line)
+			}
+			c.runTime = value.Value
+		default:
+			return fmt.Errorf("%s: line %d: unknown key %q", path, key.Line, "limits."+key.Value)
 		}
 	}
 	return nil

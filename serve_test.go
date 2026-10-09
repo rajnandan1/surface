@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -100,5 +101,34 @@ func TestServeRefusesABadOwnerList(t *testing.T) {
 				t.Fatalf("stderr is %q, want %q", stderr.String(), want)
 			}
 		})
+	}
+}
+
+func TestConfigReadsTheRunTimeLimit(t *testing.T) {
+	base := "url: https://surface.example.com\ntargets:\n  - https://api.example.com\ngithub:\n  owner_ids:\n    - 63745551\n"
+	cases := []struct{ limits, runTime, error string }{
+		{"", "", ""},
+		{"limits:\n  run_time: 45m\n", "45m", ""},
+		{"limits:\n  run_time: 0s\n", "", "line 8: limits.run_time must be a duration above zero, such as 30m"},
+		{"limits:\n  run_time: -5m\n", "", "line 8: limits.run_time must be a duration above zero, such as 30m"},
+		{"limits:\n  run_time: soon\n", "", "line 8: limits.run_time must be a duration above zero, such as 30m"},
+		{"limits:\n  runtime: 30m\n", "", `line 8: unknown key "limits.runtime"`},
+		{"limits: 30m\n", "", "line 7: limits must be a mapping"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(base+c.limits), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := loadConfig(path)
+
+		got := ""
+		if err != nil {
+			got = strings.TrimPrefix(err.Error(), path+": ")
+		}
+		if got != c.error || config.runTime != c.runTime && c.error == "" {
+			t.Errorf("%q: run time %q, error %q, want %q and %q", c.limits, config.runTime, got, c.runTime, c.error)
+		}
 	}
 }
