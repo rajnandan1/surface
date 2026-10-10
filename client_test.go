@@ -76,6 +76,7 @@ surface/api/users.yaml list-users
   < Date: <date>
 
 run <id>: 1 passed, 1 failed
+::error file=surface/api/users.yaml,line=9::list-users: status: expected 200, got 500
 `
 	if log != want {
 		t.Fatalf("CI log is\n%s\nwant\n%s", log, want)
@@ -108,6 +109,7 @@ suite surface/api/broken.yaml: line 8: unknown field "staus" (runner 1.0.0)
 surface/api/users.yaml: 2 passed
 
 run <id>: 2 passed
+::error file=surface/api/broken.yaml,line=1::suite surface/api/broken.yaml: line 8: unknown field "staus" (runner 1.0.0)
 `
 	if log != want {
 		t.Fatalf("CI log is\n%s\nwant\n%s", log, want)

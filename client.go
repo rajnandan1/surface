@@ -83,6 +83,10 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	printResult(stdout, result)
+	printAnnotations(stdout, result, suites)
+	if err := writeJobSummary(result); err != nil {
+		fmt.Fprintf(stderr, "surface run: job summary: %v\n", err)
+	}
 	switch result.State {
 	case "passed":
 		return 0
@@ -193,6 +197,9 @@ func (runner *runnerAPI) start(ctx context.Context, request runRequest) (string,
 		return "", err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("surface run: runner at %s has no /v1/runs: it may be a different major version", runner.url)
+	}
 	if response.StatusCode != http.StatusAccepted {
 		return "", runnerLine(response)
 	}
@@ -217,10 +224,12 @@ func (runner *runnerAPI) cancel(id string) error {
 	return nil
 }
 
+var errPollAgain = errors.New("surface run: poll again")
+
 func (runner *runnerAPI) wait(ctx context.Context, id string) (runResult, error) {
 	for {
 		result, err := runner.poll(ctx, id)
-		if err != nil || isFinal(result.State) {
+		if err != errPollAgain {
 			return result, err
 		}
 		select {
@@ -234,15 +243,24 @@ func (runner *runnerAPI) wait(ctx context.Context, id string) (runResult, error)
 func (runner *runnerAPI) poll(ctx context.Context, id string) (runResult, error) {
 	var result runResult
 	response, err := runner.send(ctx, http.MethodGet, "/v1/runs/"+id, nil)
+	if _, network := errors.AsType[*url.Error](err); network {
+		return result, errPollAgain
+	}
 	if err != nil {
 		return result, err
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	switch {
+	case response.StatusCode >= 500:
+		return result, errPollAgain
+	case response.StatusCode != http.StatusOK:
 		return result, runnerLine(response)
 	}
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return result, fmt.Errorf("surface run: run %s: the runner's answer is not a run result: %v", id, err)
+	}
+	if !isFinal(result.State) {
+		return result, errPollAgain
 	}
 	return result, nil
 }
@@ -270,7 +288,7 @@ func (runner *runnerAPI) sendOnce(ctx context.Context, method, path string, body
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("surface run: %v", err)
+		return nil, fmt.Errorf("surface run: %w", err)
 	}
 	return response, nil
 }
@@ -312,4 +330,78 @@ func printResult(w io.Writer, result runResult) {
 		return
 	}
 	fmt.Fprintf(w, "\nrun %s: %s\n", result.ID, countTests(result.Suites...))
+}
+
+var (
+	annotationData     = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A")
+	annotationProperty = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A", ":", "%3A", ",", "%2C")
+)
+
+func printAnnotations(w io.Writer, result runResult, suites map[string]string) {
+	annotate := func(path string, line int, message string) {
+		lineOne, _, _ := strings.Cut(message, "\n")
+		fmt.Fprintf(w, "::error file=%s,line=%d::%s\n", annotationProperty.Replace(path), line, annotationData.Replace(lineOne))
+	}
+	for _, suite := range result.Suites {
+		if suite.Failure != "" {
+			annotate(suite.Path, 1, suite.Failure)
+			continue
+		}
+		lines := map[string]int{}
+		if s, err := loadSuite(suite.Path, suites[suite.Path]); err == nil {
+			for _, t := range s.Tests {
+				lines[t.Name] = t.line
+			}
+		}
+		for _, t := range suite.Tests {
+			line := cmp.Or(lines[t.Name], 1)
+			if t.State == "failed" {
+				annotate(suite.Path, line, t.Name+": "+t.Failure)
+			}
+			if t.Cleanup != nil && t.Cleanup.State == "failed" {
+				annotate(suite.Path, line, t.Name+" cleanup: "+t.Cleanup.Failure)
+			}
+		}
+	}
+}
+
+const maxJobSummary = 1 << 20
+
+func jobSummary(result runResult) string {
+	title := result.State
+	if result.State == "error" {
+		title += ": " + result.Reason
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "### surface run %s: %s\n\n| Suite | Passed | Failed | Skipped | Cleanup failed |\n| --- | ---: | ---: | ---: | ---: |\n", result.ID, title)
+	row := func(name string, c counts) {
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d |\n", name, c.passed, c.failed, c.skipped, c.cleanupFailed)
+	}
+	for _, suite := range result.Suites {
+		name := "`" + strings.ReplaceAll(suite.Path, "|", `\|`) + "`"
+		if suite.Failure != "" {
+			name += " (load failed)"
+		}
+		row(name, countTests(suite))
+	}
+	row("Total", countTests(result.Suites...))
+	if b.Len() <= maxJobSummary {
+		return b.String()
+	}
+	const cut = "\nThe job summary stops here, because GitHub takes at most 1 MiB per step. The CI log shows every suite.\n"
+	text := b.String()[:maxJobSummary-len(cut)]
+	return text[:strings.LastIndexByte(text, '\n')+1] + cut
+}
+
+func writeJobSummary(result runResult) error {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if path == "" {
+		return nil
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = file.WriteString(jobSummary(result))
+	return errors.Join(err, file.Close())
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -97,7 +98,7 @@ func startRunner(t *testing.T, issuer *fakeIssuer, targets ...string) *httptest.
 	return server
 }
 
-// fakeGitHubJob sets the variables GitHub gives a job with id-token: write, pointed at a token endpoint that answers with sign(audience).
+// fakeGitHubJob sets the variables GitHub gives a job with id-token: write, pointed at a token endpoint that answers with sign(audience), and a step summary file of its own.
 func fakeGitHubJob(t *testing.T, sign func(audience string) string) {
 	t.Helper()
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +111,7 @@ func fakeGitHubJob(t *testing.T, sign func(audience string) string) {
 	t.Cleanup(endpoint.Close)
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", endpoint.URL+"/_apis/token?api-version=2.0")
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "job-request-token")
+	t.Setenv("GITHUB_STEP_SUMMARY", filepath.Join(t.TempDir(), "step_summary.md"))
 }
 
 func call(runner http.Handler, method, path, token string, body io.Reader) *httptest.ResponseRecorder {
