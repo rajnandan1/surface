@@ -48,6 +48,7 @@ run 01j9z3k4m5n6p7q8r9s0t1u2v3: error: runner stopped
 - When a run ends and its file is written, the runner drops the run from memory. `GET /v1/runs/<id>` for a finished run reads the file.
 - A failed write is logged with the OS error, and the run keeps running. The runner keeps a run in memory until its final write succeeds, so `GET` still answers from memory. Such a run counts against the cap on runs in memory in "Load" below, so a full disk ends in `503` for new run requests, and the operator sees the OS error in the logs.
 - `results.dir` is `/var/lib/surface/results` by default. The chart mounts a PersistentVolumeClaim there. An install that wants nothing to survive a restart mounts an `emptyDir` instead.
+- At start, the runner creates `results.dir` and its parents when they do not exist, with mode `0700`. When the runner cannot create it, it logs the OS error and keeps running, and each write then fails as above. The image already holds the default directory ([install.md](install.md#the-image)).
 - The run id is a ULID, a 26-character id whose first 10 characters encode the time, so `ls` lists the files in time order ([runs.md](runs.md)).
 - Why files and not a database: every Kubernetes cluster has a volume, so the core stays free of any vendor and any install dependency. The operator reads a run with `kubectl exec` and `cat`, with no UI and no token. A second replica would need a shared store. That is the trigger to add one, and it is not in v1.
 

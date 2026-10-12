@@ -109,6 +109,7 @@ ingress:
 
 - The image is `ghcr.io/rajnandan1/surface:X.Y.Z`, for `linux/amd64` and `linux/arm64`. There is no `latest` tag. The chart uses its `appVersion` as the image tag.
 - The base is `gcr.io/distroless/static-debian13:debug-nonroot`, pinned by digest in the `Dockerfile`. It holds busybox, one small binary that gives `sh`, `cat`, and `ls`. It also holds the CA certificates, and it runs as user 65532.
+- The image holds an empty `/var/lib/surface/results` that user 65532 owns, with mode `0700`, so the default `results.dir` works with `docker run` and no volume ([runner.md](runner.md)). The chart mounts its volume over it.
 - Why busybox: the operator reads a run result with `kubectl exec` and `cat` ([runner.md](runner.md)). `kubectl cp` needs `tar` in the image. The `nonroot` variant has no shell, so neither works there.
 - Each release updates the base digest. `gcr.io/distroless/static-debian12` stopped getting builds on 2026-08-11, so the base moves and the pin must follow.
 

@@ -10,6 +10,7 @@ import (
 	"log"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -113,6 +114,9 @@ func newRunner(logTo io.Writer, c config) (*runner, error) {
 		}
 	})
 	r.Handler = mux
+	if err := os.MkdirAll(r.config.resultsDir, 0o700); err != nil {
+		r.log.Printf("results: %v", err)
+	}
 	r.markInterrupted()
 	r.sweep()
 	return r, nil

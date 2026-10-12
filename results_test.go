@@ -113,6 +113,21 @@ func TestWithAReadOnlyFolderARunStaysInMemoryAndCountsAgainstTheCap(t *testing.T
 	}
 }
 
+func TestAtStartTheRunnerCreatesAMissingResultsFolder(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "var", "lib", "surface", "results")
+	api := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer api.Close()
+	issuer := newFakeIssuer(t)
+	token := issuer.sign(issuer.claims(runnerURL))
+	runner := boundedRunner(t, issuer, runnerURL, config{targets: targetList(t, api.URL), resultsDir: dir})
+
+	id := startRun(t, runner, token, api.URL, suiteOf(1))
+	if _, err := os.Stat(filepath.Join(dir, id+".json")); err != nil {
+		t.Fatalf("no file after the run was accepted: %v", err)
+	}
+	waitForPass(t, runner, token, id)
+}
+
 func TestTheSweepDeletesFilesOfOldRunsAndKeepsTheRest(t *testing.T) {
 	dir := t.TempDir()
 	old, fresh := newRunID(time.Now().Add(-48*time.Hour)), newRunID(time.Now().Add(-time.Hour))

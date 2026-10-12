@@ -55,4 +55,7 @@ func TestImageRunsSurfaceServeAsUser65532AndAnswersHealthz(t *testing.T) {
 	if status := docker("exec", container, "cat", "/proc/1/status"); !regexp.MustCompile(`(?m)^Uid:\s+65532\s`).MatchString(status) {
 		t.Errorf("process 1 does not run as user 65532:\n%s", status)
 	}
+	if logs := docker("logs", container); strings.Contains(logs, "results:") {
+		t.Errorf("the runner cannot use the default results.dir:\n%s", logs)
+	}
 }
