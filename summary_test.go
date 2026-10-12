@@ -36,7 +36,7 @@ tests:
 `
 
 const failedRun = `{"id": "` + fakeRunID + `", "state": "failed", "suites": [
-  {"path": "surface/api/broken.yaml", "state": "failed", "failure": "suite surface/api/broken.yaml: line 8: unknown field \"staus\" (runner 1.0.0)"},
+  {"path": "surface/api/broken.yaml", "state": "failed", "failure": "suite surface/api/broken.yaml: line 8: unknown field \"staus\" (runner 1.0.1)"},
   {"path": "surface/api/search.yaml", "state": "passed", "tests": [{"name": "search-person", "state": "passed"}, {"name": "search-company", "state": "passed"}]},
   {"path": "surface/api/users.yaml", "state": "failed", "tests": [
     {"name": "create-user", "state": "passed", "cleanup": {"state": "failed", "failure": "status: expected 204, got 500\n> DELETE https://pr-123.preview.crustdata.com/users/8812"}},
@@ -85,7 +85,7 @@ func TestRunAnnotatesEachFailureOnItsLine(t *testing.T) {
 		}
 	}
 	want := []string{
-		`::error file=surface/api/broken.yaml,line=1::suite surface/api/broken.yaml: line 8: unknown field "staus" (runner 1.0.0)` + "\n",
+		`::error file=surface/api/broken.yaml,line=1::suite surface/api/broken.yaml: line 8: unknown field "staus" (runner 1.0.1)` + "\n",
 		`::error file=surface/api/users.yaml,line=4::create-user cleanup: status: expected 204, got 500` + "\n",
 		`::error file=surface/api/users.yaml,line=14::update-user: body.discount: expected "100%25", got "50%25"` + "\n",
 	}

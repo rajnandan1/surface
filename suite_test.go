@@ -15,7 +15,7 @@ func TestLoadSuiteRejectsABrokenSuite(t *testing.T) {
     path: /health
     expect:
       staus: 200
-`, `line 8: unknown field "staus" (runner 1.0.0)`},
+`, `line 8: unknown field "staus" (runner 1.0.1)`},
 		{"two YAML documents", header + `tests:
   - name: health
     method: GET
@@ -38,13 +38,13 @@ tests:
       status: 200
 `, `line 5: YAML anchors and aliases are not allowed in a suite`},
 		{"apiVersion is missing", "kind: API\ntests: []\n", `apiVersion is missing`},
-		{"an unknown apiVersion", "apiVersion: surface/v2\nkind: API\n", `line 1: unknown apiVersion "surface/v2" (runner 1.0.0)`},
-		{"an unknown kind", "apiVersion: surface/v1\nkind: UI\n", `line 2: unknown kind "UI" (runner 1.0.0)`},
+		{"an unknown apiVersion", "apiVersion: surface/v2\nkind: API\n", `line 1: unknown apiVersion "surface/v2" (runner 1.0.1)`},
+		{"an unknown kind", "apiVersion: surface/v1\nkind: UI\n", `line 2: unknown kind "UI" (runner 1.0.1)`},
 		{"no tests", header + "tests: []\n", `tests is missing or empty`},
-		{"an unknown top-level field", header + "name: users\n", `line 3: unknown field "name" (runner 1.0.0)`},
+		{"an unknown top-level field", header + "name: users\n", `line 3: unknown field "name" (runner 1.0.1)`},
 		{"defaults with a field other than headers and timeout", header + `defaults:
   auth: token
-`, `line 4: unknown field "auth" (runner 1.0.0)`},
+`, `line 4: unknown field "auth" (runner 1.0.1)`},
 		{"a test with no name", header + `tests:
   - method: GET
     path: /health
@@ -148,7 +148,7 @@ tests:
       status: 200
       match: fuzzy
       body: {"profiles": []}
-`, `search: unknown match mode "fuzzy" (runner 1.0.0)`},
+`, `search: unknown match mode "fuzzy" (runner 1.0.1)`},
 		{"a headers. path in expect.equal", header + `tests:
   - name: create-user
     method: POST
@@ -241,7 +241,7 @@ tests:
       status: 200
     save:
       user_id: body.id
-`, `line 14: unknown variable ${{ run.attempt }} (runner 1.0.0)`},
+`, `line 14: unknown variable ${{ run.attempt }} (runner 1.0.1)`},
 		{"a variable with an operator", header + `tests:
   - name: create-user
     method: POST
@@ -258,7 +258,7 @@ tests:
       status: 200
     save:
       user_id: body.id
-`, `line 14: unknown variable ${{ run.id + 1 }} (runner 1.0.0)`},
+`, `line 14: unknown variable ${{ run.id + 1 }} (runner 1.0.1)`},
 		{"a variable with no closing braces", header + `tests:
   - name: create-user
     method: POST
@@ -398,7 +398,7 @@ tests:
       path: /users/1
       expect:
         status: 204
-`, `line 10: unknown field "name" (runner 1.0.0)`},
+`, `line 10: unknown field "name" (runner 1.0.1)`},
 		{"a cleanup with needs", header + `tests:
   - name: create-user
     method: POST
@@ -411,7 +411,7 @@ tests:
       path: /users/1
       expect:
         status: 204
-`, `line 10: unknown field "needs" (runner 1.0.0)`},
+`, `line 10: unknown field "needs" (runner 1.0.1)`},
 		{"a cleanup with no expect.status", header + `tests:
   - name: create-user
     method: POST

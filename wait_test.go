@@ -127,7 +127,7 @@ func TestRunIgnoresUnknownFieldsInTheRunResult(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code is %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	want := `surface 1.0.0 run ` + fakeRunID + ` target https://pr-123.preview.crustdata.com
+	want := `surface 1.0.1 run ` + fakeRunID + ` target https://pr-123.preview.crustdata.com
 surface/api/users.yaml: 2 passed
 
 run ` + fakeRunID + `: 2 passed

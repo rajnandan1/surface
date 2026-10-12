@@ -121,9 +121,9 @@ func TestAPathThatLooksLikeAHostStaysOnTheTarget(t *testing.T) {
 
 func TestTheRunnerAddsItsTextToTheUserAgent(t *testing.T) {
 	for _, c := range []struct{ name, headers, want string }{
-		{"no suite User-Agent", "", "surface/1.0.0 (run <id>)"},
-		{"a suite User-Agent", "    headers:\n      User-Agent: my-tests/2.0\n", "my-tests/2.0 surface/1.0.0 (run <id>)"},
-		{"an empty suite User-Agent", "    headers:\n      User-Agent: \"\"\n", "surface/1.0.0 (run <id>)"},
+		{"no suite User-Agent", "", "surface/1.0.1 (run <id>)"},
+		{"a suite User-Agent", "    headers:\n      User-Agent: my-tests/2.0\n", "my-tests/2.0 surface/1.0.1 (run <id>)"},
+		{"an empty suite User-Agent", "    headers:\n      User-Agent: \"\"\n", "surface/1.0.1 (run <id>)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			target, requests := recordingTarget(t)

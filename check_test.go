@@ -18,8 +18,8 @@ func TestCheckPrintsEveryBrokenSuiteAndExits1(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit code is %d, want 1\nstdout:\n%s\nstderr:\n%s", code, &stdout, &stderr)
 	}
-	want := `suite surface/api/orgs.yaml: line 8: unknown field "staus" (runner 1.0.0)
-suite surface/search.yaml: line 2: unknown kind "UI" (runner 1.0.0)
+	want := `suite surface/api/orgs.yaml: line 8: unknown field "staus" (runner 1.0.1)
+suite surface/search.yaml: line 2: unknown kind "UI" (runner 1.0.1)
 `
 	if stdout.String() != want {
 		t.Fatalf("stdout is\n%s\nwant\n%s", &stdout, want)
