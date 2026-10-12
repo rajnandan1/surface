@@ -65,7 +65,7 @@ func TestRunRequestWithAnUnknownFieldGets400NamingTheRunnerVersion(t *testing.T)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status is %d, want 400", response.Code)
 	}
-	want := `run: unknown field "targets" (runner 1.0.0)` + "\n"
+	want := `run: unknown field "targets" (runner 1.0.1)` + "\n"
 	if response.Body.String() != want {
 		t.Fatalf("body is %q, want %q", response.Body.String(), want)
 	}

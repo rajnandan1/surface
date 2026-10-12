@@ -98,7 +98,7 @@ kubectl -n surface create secret generic production --from-literal=api_token=...
 ### Step 4. Install the chart
 
 ```
-helm install surface oci://ghcr.io/rajnandan1/charts/surface --version 1.0.0 -n surface -f values.yaml
+helm install surface oci://ghcr.io/rajnandan1/charts/surface --version 1.0.1 -n surface -f values.yaml
 kubectl -n surface rollout status deploy/surface
 ```
 
@@ -141,7 +141,7 @@ httpRoute:
 Then apply the change:
 
 ```
-helm upgrade surface oci://ghcr.io/rajnandan1/charts/surface --version 1.0.0 -n surface -f values.yaml
+helm upgrade surface oci://ghcr.io/rajnandan1/charts/surface --version 1.0.1 -n surface -f values.yaml
 ```
 
 - The chart takes the host from `config.url`, so the route and the token audience cannot disagree.
@@ -195,7 +195,7 @@ The suite format is in [design/suite-format.md](design/suite-format.md), and the
 Push the change. The job prints one line per suite and one last line with the totals, then exits `0` when every test passed, `1` when a test failed, and `2` when the run did not complete ([design/runs.md](design/runs.md#exit-codes-and-the-ci-log)). The job page also shows a summary table, and each failure shows on its line in the pull request.
 
 ```
-surface 1.0.0 run 01j9z3k4m5n6p7q8r9s0t1u2v3 target https://pr-123.preview.crustdata.com
+surface 1.0.1 run 01j9z3k4m5n6p7q8r9s0t1u2v3 target https://pr-123.preview.crustdata.com
 surface/api/health.yaml: 1 passed
 
 run 01j9z3k4m5n6p7q8r9s0t1u2v3: 1 passed
