@@ -10,4 +10,4 @@
 ## Change `action.yml` or a workflow
 
 - After a change to `.github/workflows/`, run `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`.
-- Pass a value into a `run:` script through `env:`. `release_test.go` fails on a `${{ }}` expression inside a `run:` script of `action.yml` or `release.yml`.
+- Pass a value into a `run:` script through `env:`.

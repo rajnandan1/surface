@@ -2,28 +2,13 @@
 
 ## Go
 
-- Go 1.26 with current idioms: `errors.AsType`, `wg.Go`, `cmp.Or`, `strings.SplitSeq`, method patterns in `http.ServeMux`. `go fix -diff ./...` prints nothing.
-- The standard library first.
+- Use current Go idioms: `errors.AsType`, `wg.Go`, `cmp.Or`, `strings.SplitSeq`, method patterns in `http.ServeMux`. `go fix -diff ./...` prints nothing.
 - A comment states only what the code cannot show, in one line.
 
 ## Errors and exit codes
 
-- An error is one line of plain English that starts with where it came from.
-- A rejected unknown field names the runner version.
+- An error is one line of plain English that starts with where it came from, such as `suite %s: secret group %q has no key %q` in `internal/runner/secrets.go`.
 - `surface run` exit codes follow `docs/design/runs.md#exit-codes-and-the-ci-log`. Bad usage also exits `2`.
-
-Example of the error rule, from `internal/runner/secrets.go`:
-
-```go
-switch {
-case read[groupName] != nil:
-	return fmt.Errorf("suite %s: %v", path, read[groupName])
-case !found:
-	return fmt.Errorf("suite %s: secret group %q has no key %q", path, groupName, key)
-case value == "":
-	return fmt.Errorf("suite %s: secret group %q key %q is empty", path, groupName, key)
-}
-```
 
 ## Suite types
 
