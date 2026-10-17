@@ -15,10 +15,9 @@ go build -trimpath ./cmd/surface       # writes ./surface, which git ignores
 
 ## Testing
 
-Before a commit, run `go vet ./...` and `go test ./...`. After a change to `.github/workflows/`, also run `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`.
+Before a commit, run `go vet ./...` and `go test ./...`.
 
-- The chart tests need `helm` and the image test needs `docker`. Without them, those tests skip and pass, so install both to run every test.
-- Tests compare exact output text, including the runner version. A version bump changes `VERSION`, `charts/surface/Chart.yaml`, the helm lines in `docs/install.md`, and every `1.0.1` in test expectations. Commit 46a6c22 is the model.
+The chart tests need `helm` and the image test needs `docker`. Without them, those tests skip and pass, so install both to run every test.
 
 ## Project Structure
 
@@ -38,29 +37,33 @@ action.yml         the GitHub Action: downloads the release binary and runs surf
 
 ## Code Style
 
-Before you write or review code, read `CODING_STANDARDS.md`: the Go style, the error and comment rules, and the test conventions.
+Before you write or review code, read `CODING_STANDARDS.md`.
 
 ## Git Workflow
 
-- One branch per issue, `build/<issue number>-<slug>` (such as `build/55-create-results-dir`), merged into `main` through a pull request. A release branch is `release/vX.Y.Z`.
+- One branch per issue, `build/<issue number>-<slug>` (such as `build/55-create-results-dir`), merged into `main` through a pull request.
 - A commit message is one sentence that says what changed and why.
-- A release is a pushed tag `vX.Y.Z` that equals `VERSION`. `.github/workflows/release.yml` then builds the 6 binaries, the image, and the chart.
+- Before you change `VERSION`, `action.yml`, or `.github/workflows/`, or cut a release, read `docs/agents/release.md`.
 
 ## Boundaries
 
-- ✅ **Always do:** Treat every suite as untrusted input (ADR-0001). Pass a value into a workflow `run:` script through `env:`. `release_test.go` fails on a `${{ }}` expression inside a `run:` script of `action.yml` or `release.yml`.
-- ⚠️ **Ask first:** Adding a dependency. Changing a type in `internal/api` or a runner route: within a major version the API only grows (ADR-0012). Changing `VERSION`, the release workflow, or `action.yml`. Changing what a suite may contain.
-- 🚫 **Never do:** Write a secret value to a log, a failure text, or a run result file. The runner replaces each secret value with its `${{ secrets.… }}` reference before it stores a failure text.
+- Treat every suite as untrusted input (ADR-0001).
+- Ask the user before you:
+  - add a dependency.
+  - change a type in `internal/api` or a runner route. Within a major version, the API only grows (ADR-0012).
+  - change `VERSION`, the release workflow, or `action.yml`.
+  - change what a suite may contain.
+- In a log, a failure text, or a run result file, name a secret only by its `${{ secrets.… }}` reference. Never write the secret value there. The runner replaces each secret value with its reference before it stores a failure text.
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues live in GitHub Issues for `rajnandan1/surface`, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues for `rajnandan1/surface`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Triage uses the five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+Triage uses the five default labels. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
@@ -68,5 +71,6 @@ The layout is single-context. See `docs/agents/domain.md`.
 
 ## Documentation
 
-- `docs/design/`: how each part works. Tests read the examples in these docs, so an edit to an example can fail a test.
-- `docs/install.md`: the operator guide.
+- For how a part works, read its doc in `docs/design/`.
+- To install or operate the runner, read `docs/install.md`, the operator guide.
+- Tests read the examples in `docs/design/` and the values and links in `docs/install.md`. An edit to them can fail a test.
